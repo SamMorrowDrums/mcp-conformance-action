@@ -209,25 +209,38 @@ run_mcp_test_http() {
     
     local start_time end_time duration
     local server_pid=""
+    local pid_file=$(mktemp)
     
     start_time=$(date +%s.%N 2>/dev/null || date +%s)
     
     # Start server if start_command provided (otherwise assume external server)
     if [ -n "$cfg_start_cmd" ]; then
         log "    Starting HTTP server..."
+        
+        # Start server in background and capture its actual PID
+        # Use setsid to create new process group for clean termination
         (
             cd "$working_dir"
             if [ -n "$cfg_env" ]; then
                 export $cfg_env
             fi
-            eval "$cfg_start_cmd" &
+            # Write PID to file so parent can track it
+            echo $$ > "$pid_file"
+            exec $cfg_start_cmd
         ) &
-        server_pid=$!
+        
+        # Small delay to ensure PID file is written
+        sleep 0.2
+        server_pid=$(cat "$pid_file" 2>/dev/null)
         
         # Wait for server to be ready using MCP ping
         if ! wait_for_server "$cfg_server_url" "$SERVER_TIMEOUT"; then
             log "    ${RED}Server failed to start${NC}"
-            [ -n "$server_pid" ] && kill $server_pid 2>/dev/null
+            if [ -n "$server_pid" ]; then
+                kill -TERM $server_pid 2>/dev/null || true
+                kill -KILL $server_pid 2>/dev/null || true
+            fi
+            rm -f "$pid_file"
             return 1
         fi
         log "    ${GREEN}Server ready${NC}"
@@ -256,11 +269,19 @@ run_mcp_test_http() {
     templates_response=$(send_http_request "$cfg_server_url" "$LIST_RESOURCE_TEMPLATES_MSG" "$SERVER_TIMEOUT")
     echo "$templates_response" | jq -S '.' > "${output_prefix}_resource_templates.json" 2>/dev/null
     
-    # Stop server if we started it
+    # Stop server if we started it - use SIGTERM first, then SIGKILL
     if [ -n "$server_pid" ]; then
-        kill $server_pid 2>/dev/null || true
+        log "    Stopping server (PID: $server_pid)..."
+        kill -TERM $server_pid 2>/dev/null || true
+        # Give it a moment to shut down gracefully
+        sleep 0.5
+        # Force kill if still running
+        if kill -0 $server_pid 2>/dev/null; then
+            kill -KILL $server_pid 2>/dev/null || true
+        fi
         wait $server_pid 2>/dev/null || true
     fi
+    rm -f "$pid_file"
     
     end_time=$(date +%s.%N 2>/dev/null || date +%s)
     duration=$(echo "$end_time - $start_time" | bc 2>/dev/null || echo "0")
@@ -570,6 +591,65 @@ if [ $total_diff_count -gt 0 ]; then
 else
     echo "_No differences detected._" >> "$REPORT_FILE"
 fi
+
+# --- ADD FULL SCHEMA DETAILS SECTIONS ---
+cat >> "$REPORT_FILE" << EOF
+
+## Full Schema Details
+
+<details>
+<summary><strong>📋 Click to view full server schemas (before and after)</strong></summary>
+
+EOF
+
+for config in "${CONFIGS[@]}"; do
+    cfg_name=$(echo "$config" | jq -r '.name')
+    cfg_transport=$(echo "$config" | jq -r '.transport // "stdio"')
+    
+    cat >> "$REPORT_FILE" << EOF
+### $cfg_name ($cfg_transport)
+
+EOF
+    
+    for endpoint in $endpoints; do
+        main_file="$REPORT_DIR/main/$cfg_name/output_${endpoint}.json"
+        branch_file="$REPORT_DIR/branch/$cfg_name/output_${endpoint}.json"
+        
+        echo "#### ${endpoint}" >> "$REPORT_FILE"
+        echo "" >> "$REPORT_FILE"
+        
+        # Base (before) schema
+        echo "<details>" >> "$REPORT_FILE"
+        echo "<summary>Base ($MERGE_BASE)</summary>" >> "$REPORT_FILE"
+        echo "" >> "$REPORT_FILE"
+        echo '```json' >> "$REPORT_FILE"
+        if [ -f "$main_file" ] && [ -s "$main_file" ]; then
+            cat "$main_file" >> "$REPORT_FILE"
+        else
+            echo "{}" >> "$REPORT_FILE"
+        fi
+        echo '```' >> "$REPORT_FILE"
+        echo "</details>" >> "$REPORT_FILE"
+        echo "" >> "$REPORT_FILE"
+        
+        # Branch (after) schema
+        echo "<details>" >> "$REPORT_FILE"
+        echo "<summary>Branch ($CURRENT_BRANCH)</summary>" >> "$REPORT_FILE"
+        echo "" >> "$REPORT_FILE"
+        echo '```json' >> "$REPORT_FILE"
+        if [ -f "$branch_file" ] && [ -s "$branch_file" ]; then
+            cat "$branch_file" >> "$REPORT_FILE"
+        else
+            echo "{}" >> "$REPORT_FILE"
+        fi
+        echo '```' >> "$REPORT_FILE"
+        echo "</details>" >> "$REPORT_FILE"
+        echo "" >> "$REPORT_FILE"
+    done
+done
+
+echo "</details>" >> "$REPORT_FILE"
+echo "" >> "$REPORT_FILE"
 
 log "${BLUE}=== Conformance Test Complete ===${NC}"
 log ""
