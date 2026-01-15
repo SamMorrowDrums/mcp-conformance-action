@@ -30,7 +30,6 @@ COMPARE_REF="${MCP_COMPARE_REF:-}"
 GH_REF="${GITHUB_REF:-}"
 TRANSPORT="${MCP_TRANSPORT:-stdio}"
 SERVER_URL="${MCP_SERVER_URL:-}"
-HEALTH_ENDPOINT="${MCP_HEALTH_ENDPOINT:-/health}"
 CONFIGURATIONS="${MCP_CONFIGURATIONS:-}"
 
 # Colors for output
@@ -76,8 +75,7 @@ else
         --arg start_command "$START_CMD" \
         --arg transport "$TRANSPORT" \
         --arg server_url "$SERVER_URL" \
-        --arg health_endpoint "$HEALTH_ENDPOINT" \
-        '{name: $name, start_command: $start_command, transport: $transport, server_url: $server_url, health_endpoint: $health_endpoint}')
+        '{name: $name, start_command: $start_command, transport: $transport, server_url: $server_url}')
     CONFIGS+=("$default_config")
 fi
 
@@ -136,6 +134,7 @@ mkdir -p "$REPORT_DIR"/{main,branch,diffs}
 # MCP JSON-RPC messages
 INIT_MSG='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"conformance-test","version":"1.0.0"}}}'
 INITIALIZED_MSG='{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}'
+PING_MSG='{"jsonrpc":"2.0","id":0,"method":"ping","params":{}}'
 LIST_TOOLS_MSG='{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
 LIST_RESOURCES_MSG='{"jsonrpc":"2.0","id":3,"method":"resources/list","params":{}}'
 LIST_PROMPTS_MSG='{"jsonrpc":"2.0","id":4,"method":"prompts/list","params":{}}'
@@ -161,15 +160,21 @@ normalize_json() {
     fi
 }
 
-# Function to wait for HTTP server to be ready
+# Function to wait for HTTP server to be ready using MCP ping
 wait_for_server() {
     local url="$1"
-    local health="$2"
-    local timeout="$3"
+    local timeout="$2"
     local start_time=$(date +%s)
     
     while true; do
-        if curl -sf "${url}${health}" >/dev/null 2>&1; then
+        # Use MCP ping method to check if server is ready
+        local response=$(curl -sf -X POST "$url" \
+            -H "Content-Type: application/json" \
+            -d "$PING_MSG" \
+            --max-time 2 2>/dev/null)
+        
+        # Check if we got a valid JSON-RPC response
+        if echo "$response" | jq -e '.jsonrpc == "2.0"' >/dev/null 2>&1; then
             return 0
         fi
         
@@ -200,8 +205,7 @@ run_mcp_test_http() {
     local output_prefix="$3"
     local cfg_start_cmd="$4"
     local cfg_server_url="$5"
-    local cfg_health="$6"
-    local cfg_env="$7"
+    local cfg_env="$6"
     
     local start_time end_time duration
     local server_pid=""
@@ -220,8 +224,8 @@ run_mcp_test_http() {
         ) &
         server_pid=$!
         
-        # Wait for server to be ready
-        if ! wait_for_server "$cfg_server_url" "$cfg_health" "$SERVER_TIMEOUT"; then
+        # Wait for server to be ready using MCP ping
+        if ! wait_for_server "$cfg_server_url" "$SERVER_TIMEOUT"; then
             log "    ${RED}Server failed to start${NC}"
             [ -n "$server_pid" ] && kill $server_pid 2>/dev/null
             return 1
@@ -342,11 +346,10 @@ run_mcp_test() {
     local cfg_transport=$(echo "$config" | jq -r '.transport // "stdio"')
     local cfg_start_cmd=$(echo "$config" | jq -r '.start_command // empty')
     local cfg_server_url=$(echo "$config" | jq -r '.server_url // empty')
-    local cfg_health=$(echo "$config" | jq -r '.health_endpoint // "/health"')
     local cfg_env=$(echo "$config" | jq -r '.env_vars // empty')
     
     if [ "$cfg_transport" = "http" ]; then
-        run_mcp_test_http "$working_dir" "$name" "$output_prefix" "$cfg_start_cmd" "$cfg_server_url" "$cfg_health" "$cfg_env"
+        run_mcp_test_http "$working_dir" "$name" "$output_prefix" "$cfg_start_cmd" "$cfg_server_url" "$cfg_env"
     else
         run_mcp_test_stdio "$working_dir" "$name" "$output_prefix" "$cfg_start_cmd" "$cfg_env"
     fi

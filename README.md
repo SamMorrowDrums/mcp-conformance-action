@@ -126,7 +126,6 @@ jobs:
 | `start_command` | Command to start the MCP server (stdio transport) | No* | `""` |
 | `transport` | Transport type: `stdio` or `http` | No | `stdio` |
 | `server_url` | Server URL for HTTP transport (e.g., `http://localhost:3000/mcp`) | No* | `""` |
-| `health_endpoint` | Health check endpoint for HTTP servers | No | `/health` |
 | `configurations` | JSON array of test configurations (for multiple configs) | No | `""` |
 | `env_vars` | Environment variables (newline-separated KEY=VALUE pairs) | No | `""` |
 | `working_directory` | Working directory for commands | No | `.` |
@@ -227,13 +226,12 @@ jobs:
       start_command: "node dist/http-server.js"  # Starts HTTP server
       transport: "http"
       server_url: "http://localhost:3000/mcp"
-      health_endpoint: "/health"
       setup_node: true
 ```
 
 The action will:
 1. Start your server using `start_command`
-2. Wait for the health endpoint to respond
+2. Wait for the server to respond to MCP `ping` requests
 3. Send MCP requests via HTTP POST
 4. Stop the server after tests complete
 
@@ -272,8 +270,7 @@ jobs:
             "name": "http",
             "transport": "http",
             "start_command": "node dist/http.js",
-            "server_url": "http://localhost:3000/mcp",
-            "health_endpoint": "/health"
+            "server_url": "http://localhost:3000/mcp"
           },
           {
             "name": "stdio-debug",
@@ -289,7 +286,6 @@ Each configuration in the array can have:
 - `transport`: `stdio` or `http` (default: `stdio`)
 - `start_command`: Command to start the server
 - `server_url`: URL for HTTP transport
-- `health_endpoint`: Health check path for HTTP (default: `/health`)
 - `env_vars`: Additional environment variables
 
 ## License

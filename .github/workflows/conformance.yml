@@ -32,11 +32,6 @@ on:
         required: false
         type: string
         default: ''
-      health_endpoint:
-        description: 'Health check endpoint for HTTP servers (e.g., /health)'
-        required: false
-        type: string
-        default: '/health'
       configurations:
         description: 'JSON array of test configurations (for multiple configs). Each object can have: name, start_command, server_url, transport, env_vars'
         required: false
@@ -175,7 +170,6 @@ jobs:
           MCP_COMPARE_REF: ${{ inputs.compare_ref }}
           MCP_TRANSPORT: ${{ inputs.transport }}
           MCP_SERVER_URL: ${{ inputs.server_url }}
-          MCP_HEALTH_ENDPOINT: ${{ inputs.health_endpoint }}
           MCP_CONFIGURATIONS: ${{ inputs.configurations }}
           GITHUB_REF: ${{ github.ref }}
         run: |
