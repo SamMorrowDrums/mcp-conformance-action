@@ -541,9 +541,9 @@ for config in "${CONFIGS[@]}"; do
     done
     
     if [ "${config_diffs[$cfg_name]}" = true ]; then
-        ((total_diff_count++))
+        total_diff_count=$((total_diff_count + 1))
     else
-        ((total_ok_count++))
+        total_ok_count=$((total_ok_count + 1))
     fi
 done
 log ""
