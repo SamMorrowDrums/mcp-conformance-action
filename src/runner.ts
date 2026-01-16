@@ -172,6 +172,43 @@ async function runBuild(dir: string, inputs: ActionInputs): Promise<void> {
 }
 
 /**
+ * Sleep for a specified number of milliseconds
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Run pre-test command if specified
+ */
+async function runPreTestCommand(config: TestConfiguration, workDir: string): Promise<void> {
+  if (config.pre_test_command) {
+    core.info(`  Running pre-test command: ${config.pre_test_command}`);
+    await exec.exec("sh", ["-c", config.pre_test_command], { cwd: workDir });
+
+    if (config.pre_test_wait_ms && config.pre_test_wait_ms > 0) {
+      core.info(`  Waiting ${config.pre_test_wait_ms}ms for service to be ready...`);
+      await sleep(config.pre_test_wait_ms);
+    }
+  }
+}
+
+/**
+ * Run post-test command if specified (cleanup)
+ */
+async function runPostTestCommand(config: TestConfiguration, workDir: string): Promise<void> {
+  if (config.post_test_command) {
+    core.info(`  Running post-test command: ${config.post_test_command}`);
+    try {
+      await exec.exec("sh", ["-c", config.post_test_command], { cwd: workDir });
+    } catch (error) {
+      // Log but don't fail - cleanup errors shouldn't break the test
+      core.warning(`  Post-test command failed: ${error}`);
+    }
+  }
+}
+
+/**
  * Probe a server with a specific configuration
  */
 async function probeWithConfig(
@@ -185,6 +222,9 @@ async function probeWithConfig(
   const envVars = { ...globalEnvVars, ...configEnvVars };
   const headers = { ...globalHeaders, ...config.headers };
   const customMessages = config.custom_messages || globalCustomMessages;
+
+  // Run pre-test command before probing
+  await runPreTestCommand(config, workDir);
 
   if (config.transport === "stdio") {
     const command = config.start_command || "";
@@ -304,13 +344,19 @@ export async function runSingleConfigTest(
   // Test current branch
   core.info("🔄 Testing current branch...");
   const branchStart = Date.now();
-  const branchResult = await probeWithConfig(
-    config,
-    ctx.workDir,
-    globalEnvVars,
-    globalHeaders,
-    globalCustomMessages
-  );
+  let branchResult: ProbeResult;
+  try {
+    branchResult = await probeWithConfig(
+      config,
+      ctx.workDir,
+      globalEnvVars,
+      globalHeaders,
+      globalCustomMessages
+    );
+  } finally {
+    // Always run post-test cleanup
+    await runPostTestCommand(config, ctx.workDir);
+  }
   result.branchTime = Date.now() - branchStart;
 
   if (branchResult.error) {
@@ -346,13 +392,19 @@ export async function runSingleConfigTest(
     // Probe on base
     core.info("🔄 Testing comparison ref...");
     const baseStart = Date.now();
-    const baseResult = await probeWithConfig(
-      config,
-      baseWorkDir,
-      globalEnvVars,
-      globalHeaders,
-      globalCustomMessages
-    );
+    let baseResult: ProbeResult;
+    try {
+      baseResult = await probeWithConfig(
+        config,
+        baseWorkDir,
+        globalEnvVars,
+        globalHeaders,
+        globalCustomMessages
+      );
+    } finally {
+      // Always run post-test cleanup
+      await runPostTestCommand(config, baseWorkDir);
+    }
     result.baseTime = Date.now() - baseStart;
 
     if (baseResult.error) {

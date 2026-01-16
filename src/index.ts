@@ -198,7 +198,7 @@ async function runInitialBuild(inputs: ActionInputs): Promise<void> {
  */
 async function run(): Promise<void> {
   try {
-    core.info("🚀 MCP Conformance Action v2.0.0");
+    core.info("🚀 MCP Conformance Action");
     core.info("");
 
     // Get inputs

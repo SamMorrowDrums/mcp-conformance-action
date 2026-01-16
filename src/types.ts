@@ -11,6 +11,12 @@ export interface TestConfiguration {
   headers?: Record<string, string>;
   env_vars?: string;
   custom_messages?: CustomMessage[];
+  /** Command to run before starting the MCP server for this config */
+  pre_test_command?: string;
+  /** Milliseconds to wait after pre_test_command before starting the server */
+  pre_test_wait_ms?: number;
+  /** Command to run after stopping the MCP server for this config (cleanup) */
+  post_test_command?: string;
 }
 
 export interface CustomMessage {
