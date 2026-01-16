@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "build": "ncc build src/index.ts -o dist --license licenses.txt",
+    "build": "ncc build src/index.ts -o dist --license licenses.txt --no-source-map-register",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write src/",
