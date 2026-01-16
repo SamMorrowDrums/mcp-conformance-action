@@ -173,12 +173,24 @@ jobs:
           MCP_CONFIGURATIONS: ${{ inputs.configurations }}
           GITHUB_REF: ${{ github.ref }}
         run: |
-          /tmp/mcp-conformance-test.sh > conformance-summary.txt 2>&1 || true
+          set +e
+          /tmp/mcp-conformance-test.sh > conformance-summary.txt 2>&1
+          exit_code=$?
+          set -e
           
           cat conformance-summary.txt
           
-          if grep -q "RESULT: ALL TESTS PASSED" conformance-summary.txt; then
+          # Check for actual errors (script failures, not just differences)
+          if [ $exit_code -ne 0 ]; then
+            echo "status=error" >> $GITHUB_OUTPUT
+            echo "::error::Conformance test script failed with exit code $exit_code"
+            exit 1
+          elif grep -q "RESULT: ALL TESTS PASSED" conformance-summary.txt; then
             echo "status=passed" >> $GITHUB_OUTPUT
+          elif grep -q "ERROR\|FATAL\|Server failed" conformance-summary.txt; then
+            echo "status=error" >> $GITHUB_OUTPUT
+            echo "::error::Conformance test encountered errors"
+            exit 1
           else
             echo "status=differences" >> $GITHUB_OUTPUT
           fi
