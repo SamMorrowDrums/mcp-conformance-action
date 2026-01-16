@@ -6,6 +6,49 @@ branding:
   color: 'green'
 
 inputs:
+  # Language setup (optional convenience)
+  setup_node:
+    description: 'Set up Node.js environment'
+    required: false
+    default: 'false'
+  node_version:
+    description: 'Node.js version (default: 20)'
+    required: false
+    default: '20'
+  setup_python:
+    description: 'Set up Python environment'
+    required: false
+    default: 'false'
+  python_version:
+    description: 'Python version (default: 3.11)'
+    required: false
+    default: '3.11'
+  setup_go:
+    description: 'Set up Go environment'
+    required: false
+    default: 'false'
+  go_version:
+    description: 'Go version (default: read from go.mod)'
+    required: false
+    default: ''
+  setup_rust:
+    description: 'Set up Rust environment'
+    required: false
+    default: 'false'
+  rust_toolchain:
+    description: 'Rust toolchain (default: stable)'
+    required: false
+    default: 'stable'
+  setup_dotnet:
+    description: 'Set up .NET environment'
+    required: false
+    default: 'false'
+  dotnet_version:
+    description: '.NET version (default: 8.0.x)'
+    required: false
+    default: '8.0.x'
+
+  # Build configuration
   install_command:
     description: 'Command to install dependencies'
     required: true
@@ -17,6 +60,8 @@ inputs:
     description: 'Command to start the MCP server (for stdio transport, or to start HTTP server)'
     required: false
     default: ''
+
+  # Transport configuration
   transport:
     description: 'Transport type: stdio or streamable-http'
     required: false
@@ -29,6 +74,8 @@ inputs:
     description: 'JSON array of test configurations for multiple transports. Each object: name, transport, start_command, server_url, env_vars'
     required: false
     default: ''
+
+  # Test configuration
   compare_ref:
     description: 'Git ref to compare against (auto-detects merge-base or previous tag if not set)'
     required: false
@@ -53,6 +100,38 @@ outputs:
 runs:
   using: 'composite'
   steps:
+    # Optional language setup
+    - name: Set up Node.js
+      if: inputs.setup_node == 'true'
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node_version }}
+
+    - name: Set up Python
+      if: inputs.setup_python == 'true'
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python_version }}
+
+    - name: Set up Go
+      if: inputs.setup_go == 'true'
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go_version || null }}
+        go-version-file: ${{ inputs.go_version == '' && 'go.mod' || null }}
+
+    - name: Set up Rust
+      if: inputs.setup_rust == 'true'
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ inputs.rust_toolchain }}
+
+    - name: Set up .NET
+      if: inputs.setup_dotnet == 'true'
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ inputs.dotnet_version }}
+
     - name: Download conformance test script
       shell: bash
       run: |

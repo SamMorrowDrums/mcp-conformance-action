@@ -42,124 +42,94 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
       - uses: SamMorrowDrums/mcp-conformance-action@v1
         with:
-          install_command: "npm ci"
-          build_command: "npm run build"
-          start_command: "node dist/stdio.js"
+          setup_node: true
+          install_command: npm ci
+          build_command: npm run build
+          start_command: node dist/stdio.js
 ```
 
 ## Language Examples
 
-### Go
+### Node.js / TypeScript
 
 ```yaml
-jobs:
-  conformance:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
-
-      - uses: SamMorrowDrums/mcp-conformance-action@v1
-        with:
-          install_command: "go mod download"
-          build_command: "go build -o bin/server ./cmd/stdio"
-          start_command: "./bin/server"
+- uses: SamMorrowDrums/mcp-conformance-action@v1
+  with:
+    setup_node: true
+    node_version: '22'
+    install_command: npm ci
+    build_command: npm run build
+    start_command: node dist/stdio.js
 ```
 
 ### Python
 
 ```yaml
-jobs:
-  conformance:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - uses: SamMorrowDrums/mcp-conformance-action@v1
-        with:
-          install_command: "pip install -e ."
-          start_command: "python -m my_mcp_server"
+- uses: SamMorrowDrums/mcp-conformance-action@v1
+  with:
+    setup_python: true
+    python_version: '3.12'
+    install_command: pip install -e .
+    start_command: python -m my_mcp_server
 ```
 
-### TypeScript / Node.js
+### Go
 
 ```yaml
-jobs:
-  conformance:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - uses: SamMorrowDrums/mcp-conformance-action@v1
-        with:
-          install_command: "npm ci"
-          build_command: "npm run build"
-          start_command: "node dist/stdio.js"
+- uses: SamMorrowDrums/mcp-conformance-action@v1
+  with:
+    setup_go: true
+    install_command: go mod download
+    build_command: go build -o bin/server ./cmd/stdio
+    start_command: ./bin/server
 ```
 
 ### Rust
 
 ```yaml
-jobs:
-  conformance:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: SamMorrowDrums/mcp-conformance-action@v1
-        with:
-          install_command: "cargo fetch"
-          build_command: "cargo build --release"
-          start_command: "./target/release/my-mcp-server"
+- uses: SamMorrowDrums/mcp-conformance-action@v1
+  with:
+    setup_rust: true
+    install_command: cargo fetch
+    build_command: cargo build --release
+    start_command: ./target/release/my-mcp-server
 ```
 
 ### C# / .NET
 
 ```yaml
-jobs:
-  conformance:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+- uses: SamMorrowDrums/mcp-conformance-action@v1
+  with:
+    setup_dotnet: true
+    dotnet_version: '9.0.x'
+    install_command: dotnet restore
+    build_command: dotnet build -c Release
+    start_command: dotnet run --no-build -c Release
+```
 
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
+### Custom Setup
 
-      - uses: SamMorrowDrums/mcp-conformance-action@v1
-        with:
-          install_command: "dotnet restore"
-          build_command: "dotnet build -c Release"
-          start_command: "dotnet run --no-build -c Release"
+If you need more control over environment setup (caching, specific registries, etc.), do your own setup before calling the action:
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+    with:
+      fetch-depth: 0
+
+  - uses: actions/setup-node@v4
+    with:
+      node-version: '22'
+      cache: 'npm'
+      registry-url: 'https://npm.pkg.github.com'
+
+  - uses: SamMorrowDrums/mcp-conformance-action@v1
+    with:
+      install_command: npm ci
+      build_command: npm run build
+      start_command: node dist/stdio.js
 ```
 
 ## Testing Multiple Transports
@@ -169,8 +139,9 @@ Test both stdio and HTTP transports in a single run using the `configurations` i
 ```yaml
 - uses: SamMorrowDrums/mcp-conformance-action@v1
   with:
-    install_command: "npm ci"
-    build_command: "npm run build"
+    setup_node: true
+    install_command: npm ci
+    build_command: npm run build
     configurations: |
       [
         {
@@ -188,6 +159,21 @@ Test both stdio and HTTP transports in a single run using the `configurations` i
 ```
 
 ## Inputs Reference
+
+### Language Setup (Optional)
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `setup_node` | Set up Node.js environment | `false` |
+| `node_version` | Node.js version | `20` |
+| `setup_python` | Set up Python environment | `false` |
+| `python_version` | Python version | `3.11` |
+| `setup_go` | Set up Go environment | `false` |
+| `go_version` | Go version (reads from go.mod if empty) | `""` |
+| `setup_rust` | Set up Rust environment | `false` |
+| `rust_toolchain` | Rust toolchain | `stable` |
+| `setup_dotnet` | Set up .NET environment | `false` |
+| `dotnet_version` | .NET version | `8.0.x` |
 
 ### Required Inputs
 
@@ -262,9 +248,10 @@ The default transport communicates with your server via stdin/stdout using JSON-
 ```yaml
 - uses: SamMorrowDrums/mcp-conformance-action@v1
   with:
-    install_command: "npm ci"
-    build_command: "npm run build"
-    start_command: "node dist/stdio.js"
+    setup_node: true
+    install_command: npm ci
+    build_command: npm run build
+    start_command: node dist/stdio.js
 ```
 
 ### Streamable HTTP Transport
@@ -274,11 +261,12 @@ For servers exposing an HTTP endpoint:
 ```yaml
 - uses: SamMorrowDrums/mcp-conformance-action@v1
   with:
-    install_command: "npm ci"
-    build_command: "npm run build"
-    start_command: "node dist/http.js"
-    transport: "streamable-http"
-    server_url: "http://localhost:3000/mcp"
+    setup_node: true
+    install_command: npm ci
+    build_command: npm run build
+    start_command: node dist/http.js
+    transport: streamable-http
+    server_url: http://localhost:3000/mcp
 ```
 
 The action will:
@@ -292,9 +280,9 @@ For pre-deployed servers, omit `start_command`:
 ```yaml
 - uses: SamMorrowDrums/mcp-conformance-action@v1
   with:
-    install_command: "true"
-    transport: "streamable-http"
-    server_url: "https://mcp.example.com/api"
+    install_command: 'true'
+    transport: streamable-http
+    server_url: https://mcp.example.com/api
 ```
 
 ## Version Comparison Strategies
@@ -322,9 +310,11 @@ Specify any git ref to compare against:
 ```yaml
 - uses: SamMorrowDrums/mcp-conformance-action@v1
   with:
-    install_command: "npm ci"
-    compare_ref: "v1.0.0"
-    start_command: "node dist/stdio.js"
+    setup_node: true
+    install_command: npm ci
+    build_command: npm run build
+    start_command: node dist/stdio.js
+    compare_ref: v1.0.0
 ```
 
 ## Artifacts and Reports
@@ -358,14 +348,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
       - uses: SamMorrowDrums/mcp-conformance-action@v1
         with:
-          install_command: "npm ci"
-          build_command: "npm run build"
+          setup_node: true
+          install_command: npm ci
+          build_command: npm run build
           configurations: |
             [
               {
