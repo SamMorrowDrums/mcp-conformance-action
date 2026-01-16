@@ -198,7 +198,8 @@ export async function probeServer(options: ProbeOptions): Promise<ProbeResult> {
 }
 
 /**
- * Normalize a probe result for comparison by sorting arrays recursively
+ * Normalize a probe result for comparison by sorting keys and arrays recursively.
+ * Also handles embedded JSON strings in "text" fields (from tool call responses).
  */
 export function normalizeProbeResult(result: unknown): unknown {
   if (result === null || result === undefined) {
@@ -206,8 +207,9 @@ export function normalizeProbeResult(result: unknown): unknown {
   }
 
   if (Array.isArray(result)) {
-    // Sort array by JSON string representation for consistent ordering
-    return result.map(normalizeProbeResult).sort((a, b) => {
+    // First normalize all elements, then sort by JSON string representation
+    const normalized = result.map(normalizeProbeResult);
+    return normalized.sort((a, b) => {
       const aStr = JSON.stringify(a);
       const bStr = JSON.stringify(b);
       return aStr.localeCompare(bStr);
@@ -215,10 +217,30 @@ export function normalizeProbeResult(result: unknown): unknown {
   }
 
   if (typeof result === "object") {
+    const obj = result as Record<string, unknown>;
     const normalized: Record<string, unknown> = {};
-    const keys = Object.keys(result).sort();
+
+    // Sort keys alphabetically
+    const keys = Object.keys(obj).sort();
+
     for (const key of keys) {
-      normalized[key] = normalizeProbeResult((result as Record<string, unknown>)[key]);
+      let value = obj[key];
+
+      // Handle embedded JSON in "text" fields (tool call responses)
+      if (key === "text" && typeof value === "string") {
+        const trimmed = value.trim();
+        if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+          try {
+            const parsed = JSON.parse(value);
+            // Re-serialize the normalized JSON to keep it as a string
+            value = JSON.stringify(normalizeProbeResult(parsed));
+          } catch {
+            // Not valid JSON, keep as-is
+          }
+        }
+      }
+
+      normalized[key] = normalizeProbeResult(value);
     }
     return normalized;
   }

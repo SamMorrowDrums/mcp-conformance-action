@@ -1,4 +1,5 @@
 import { parseHeaders, parseConfigurations } from "../runner.js";
+import { normalizeProbeResult } from "../probe.js";
 
 describe("parseHeaders", () => {
   it("returns empty object for empty input", () => {
@@ -146,5 +147,95 @@ describe("parseConfigurations", () => {
       start_command: "go run ./cmd/server stdio",
       args: "--read-only",
     });
+  });
+});
+
+describe("normalizeProbeResult", () => {
+  it("returns null/undefined as-is", () => {
+    expect(normalizeProbeResult(null)).toBe(null);
+    expect(normalizeProbeResult(undefined)).toBe(undefined);
+  });
+
+  it("returns primitives as-is", () => {
+    expect(normalizeProbeResult("hello")).toBe("hello");
+    expect(normalizeProbeResult(123)).toBe(123);
+    expect(normalizeProbeResult(true)).toBe(true);
+  });
+
+  it("sorts object keys alphabetically", () => {
+    const input = { zebra: 1, apple: 2, mango: 3 };
+    const result = normalizeProbeResult(input);
+    const keys = Object.keys(result as object);
+    expect(keys).toEqual(["apple", "mango", "zebra"]);
+  });
+
+  it("sorts nested object keys", () => {
+    const input = {
+      outer: {
+        zebra: 1,
+        apple: 2,
+      },
+    };
+    const result = normalizeProbeResult(input) as { outer: object };
+    const nestedKeys = Object.keys(result.outer);
+    expect(nestedKeys).toEqual(["apple", "zebra"]);
+  });
+
+  it("sorts arrays by JSON string representation", () => {
+    const input = [
+      { name: "zebra", value: 1 },
+      { name: "apple", value: 2 },
+    ];
+    const result = normalizeProbeResult(input) as Array<{ name: string }>;
+    expect(result[0].name).toBe("apple");
+    expect(result[1].name).toBe("zebra");
+  });
+
+  it("handles embedded JSON in text fields", () => {
+    const embeddedJson = JSON.stringify({ zebra: 1, apple: 2 });
+    const input = {
+      content: [{ type: "text", text: embeddedJson }],
+    };
+    const result = normalizeProbeResult(input) as {
+      content: Array<{ text: string }>;
+    };
+    // The embedded JSON should be normalized (keys sorted)
+    const parsed = JSON.parse(result.content[0].text);
+    const keys = Object.keys(parsed);
+    expect(keys).toEqual(["apple", "zebra"]);
+  });
+
+  it("handles embedded JSON arrays in text fields", () => {
+    const embeddedJson = JSON.stringify([{ name: "zebra" }, { name: "apple" }]);
+    const input = {
+      content: [{ type: "text", text: embeddedJson }],
+    };
+    const result = normalizeProbeResult(input) as {
+      content: Array<{ text: string }>;
+    };
+    // The embedded JSON array should be normalized and sorted
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed[0].name).toBe("apple");
+    expect(parsed[1].name).toBe("zebra");
+  });
+
+  it("leaves non-JSON text fields unchanged", () => {
+    const input = {
+      content: [{ type: "text", text: "Hello, world!" }],
+    };
+    const result = normalizeProbeResult(input) as {
+      content: Array<{ text: string }>;
+    };
+    expect(result.content[0].text).toBe("Hello, world!");
+  });
+
+  it("produces consistent JSON output regardless of input key order", () => {
+    const input1 = { z: 1, a: 2, m: { x: 1, b: 2 } };
+    const input2 = { a: 2, m: { b: 2, x: 1 }, z: 1 };
+
+    const result1 = JSON.stringify(normalizeProbeResult(input1));
+    const result2 = JSON.stringify(normalizeProbeResult(input2));
+
+    expect(result1).toBe(result2);
   });
 });

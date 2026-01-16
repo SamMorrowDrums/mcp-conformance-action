@@ -19,7 +19,8 @@ export interface ProbeOptions {
  */
 export declare function probeServer(options: ProbeOptions): Promise<ProbeResult>;
 /**
- * Normalize a probe result for comparison by sorting arrays recursively
+ * Normalize a probe result for comparison by sorting keys and arrays recursively.
+ * Also handles embedded JSON strings in "text" fields (from tool call responses).
  */
 export declare function normalizeProbeResult(result: unknown): unknown;
 /**
