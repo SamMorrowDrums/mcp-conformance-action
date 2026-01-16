@@ -3,3 +3,4 @@ probe/node_modules/
 
 # Build artifacts
 *.log
+node_modules

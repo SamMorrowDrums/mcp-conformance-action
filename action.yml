@@ -79,6 +79,10 @@ inputs:
     description: 'JSON array of custom JSON-RPC messages to send. Each object: id (number), name (string), message (JSON-RPC object). Applied to all configurations unless overridden per-config.'
     required: false
     default: ''
+  headers:
+    description: 'HTTP headers to send with streamable-http requests. JSON object or newline-separated "Header: value" pairs. Applied to all HTTP configurations unless overridden per-config.'
+    required: false
+    default: ''
 
   # Test configuration
   compare_ref:
@@ -137,13 +141,6 @@ runs:
       with:
         dotnet-version: ${{ inputs.dotnet_version }}
 
-    - name: Download conformance test script
-      shell: bash
-      run: |
-        curl -sSL -o /tmp/mcp-conformance-test.sh \
-          https://raw.githubusercontent.com/sammorrowdrums/mcp-conformance-action/${{ github.action_ref || 'main' }}/scripts/conformance-test.sh
-        chmod +x /tmp/mcp-conformance-test.sh
-
     - name: Set environment variables
       if: inputs.env_vars != ''
       shell: bash
@@ -154,38 +151,29 @@ runs:
       id: conformance
       shell: bash
       env:
-        MCP_INSTALL_COMMAND: ${{ inputs.install_command }}
-        MCP_BUILD_COMMAND: ${{ inputs.build_command }}
-        MCP_START_COMMAND: ${{ inputs.start_command }}
-        MCP_SERVER_TIMEOUT: ${{ inputs.server_timeout }}
-        MCP_COMPARE_REF: ${{ inputs.compare_ref }}
-        MCP_TRANSPORT: ${{ inputs.transport }}
-        MCP_SERVER_URL: ${{ inputs.server_url }}
-        MCP_CONFIGURATIONS: ${{ inputs.configurations }}
-        MCP_CUSTOM_MESSAGES: ${{ inputs.custom_messages }}
-        MCP_ENV_VARS: ${{ inputs.env_vars }}
-        GITHUB_REF: ${{ github.ref }}
+        INPUT_INSTALL_COMMAND: ${{ inputs.install_command }}
+        INPUT_BUILD_COMMAND: ${{ inputs.build_command }}
+        INPUT_START_COMMAND: ${{ inputs.start_command }}
+        INPUT_SERVER_TIMEOUT: ${{ inputs.server_timeout }}
+        INPUT_COMPARE_REF: ${{ inputs.compare_ref }}
+        INPUT_TRANSPORT: ${{ inputs.transport }}
+        INPUT_SERVER_URL: ${{ inputs.server_url }}
+        INPUT_CONFIGURATIONS: ${{ inputs.configurations }}
+        INPUT_CUSTOM_MESSAGES: ${{ inputs.custom_messages }}
+        INPUT_HEADERS: ${{ inputs.headers }}
+        INPUT_ENV_VARS: ${{ inputs.env_vars }}
+        INPUT_SETUP_NODE: ${{ inputs.setup_node }}
+        INPUT_NODE_VERSION: ${{ inputs.node_version }}
+        INPUT_SETUP_PYTHON: ${{ inputs.setup_python }}
+        INPUT_PYTHON_VERSION: ${{ inputs.python_version }}
+        INPUT_SETUP_GO: ${{ inputs.setup_go }}
+        INPUT_GO_VERSION: ${{ inputs.go_version }}
+        INPUT_SETUP_RUST: ${{ inputs.setup_rust }}
+        INPUT_RUST_TOOLCHAIN: ${{ inputs.rust_toolchain }}
+        INPUT_SETUP_DOTNET: ${{ inputs.setup_dotnet }}
+        INPUT_DOTNET_VERSION: ${{ inputs.dotnet_version }}
       run: |
-        set +e
-        /tmp/mcp-conformance-test.sh > conformance-summary.txt 2>&1
-        exit_code=$?
-        set -e
-        
-        cat conformance-summary.txt
-        
-        if [ $exit_code -ne 0 ]; then
-          echo "status=error" >> $GITHUB_OUTPUT
-          echo "::error::Conformance test script failed with exit code $exit_code"
-          exit 1
-        elif grep -q "RESULT: ALL TESTS PASSED" conformance-summary.txt; then
-          echo "status=passed" >> $GITHUB_OUTPUT
-        elif grep -q "ERROR\|FATAL\|Server failed" conformance-summary.txt; then
-          echo "status=error" >> $GITHUB_OUTPUT
-          echo "::error::Conformance test encountered errors"
-          exit 1
-        else
-          echo "status=differences" >> $GITHUB_OUTPUT
-        fi
+        node "${{ github.action_path }}/dist/index.js"
 
     - name: Generate Job Summary
       shell: bash
