@@ -269,7 +269,7 @@ run_mcp_test_http() {
         if [ -n "$cfg_env" ]; then
             export $cfg_env
         fi
-        setsid $cfg_start_cmd > /dev/null 2>"${output_prefix}_stderr.log" &
+        setsid $cfg_start_cmd > /dev/null 2>&1 &
         server_pid=$!
         cd "$PROJECT_DIR"
         
@@ -387,7 +387,7 @@ run_mcp_test_stdio() {
                 done
             fi
             sleep 0.5
-        ) | timeout "${SERVER_TIMEOUT}s" bash -c "cd '$working_dir' && $cmd" 2>"${output_prefix}_stderr.log" || true
+        ) | timeout "${SERVER_TIMEOUT}s" bash -c "cd '$working_dir' && $cmd" 2>&1 || true
     )
     
     end_time=$(date +%s.%N 2>/dev/null || date +%s)
@@ -736,46 +736,13 @@ cat >> "$REPORT_FILE" << EOF
 
 ## Full Data
 
-Full JSON responses and server logs are available in the uploaded **conformance-report** artifact:
+Full JSON responses are available in the uploaded **conformance-report** artifact:
 
 - \`main/<config>/output_*.json\` - Base version responses
 - \`branch/<config>/output_*.json\` - Branch version responses  
 - \`diffs/<config>/*.diff\` - Diff files for changed endpoints
-- \`*/output_stderr.log\` - Server stderr logs
 
 EOF
-
-# --- ADD SERVER LOGS SUMMARY ---
-echo "### Server Logs Summary" >> "$REPORT_FILE"
-echo "" >> "$REPORT_FILE"
-
-for config in "${CONFIGS[@]}"; do
-    cfg_name=$(echo "$config" | jq -r '.name')
-    
-    echo "- **$cfg_name**:" >> "$REPORT_FILE"
-    
-    # Branch logs summary
-    branch_stderr="$REPORT_DIR/branch/$cfg_name/output_stderr.log"
-    if [ -f "$branch_stderr" ] && [ -s "$branch_stderr" ]; then
-        branch_lines=$(wc -l < "$branch_stderr" | tr -d ' ')
-        branch_size=$(du -h "$branch_stderr" | cut -f1)
-        echo "  - Branch: \`branch/$cfg_name/output_stderr.log\` ($branch_lines lines, $branch_size)" >> "$REPORT_FILE"
-    else
-        echo "  - Branch: (no stderr output)" >> "$REPORT_FILE"
-    fi
-    
-    # Base logs summary
-    main_stderr="$REPORT_DIR/main/$cfg_name/output_stderr.log"
-    if [ -f "$main_stderr" ] && [ -s "$main_stderr" ]; then
-        main_lines=$(wc -l < "$main_stderr" | tr -d ' ')
-        main_size=$(du -h "$main_stderr" | cut -f1)
-        echo "  - Base: \`main/$cfg_name/output_stderr.log\` ($main_lines lines, $main_size)" >> "$REPORT_FILE"
-    else
-        echo "  - Base: (no stderr output)" >> "$REPORT_FILE"
-    fi
-done
-
-echo "" >> "$REPORT_FILE"
 
 log "${BLUE}=== Conformance Test Complete ===${NC}"
 log ""
