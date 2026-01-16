@@ -14,8 +14,25 @@ inputs:
     required: false
     default: ''
   start_command:
-    description: 'Command to start the MCP server (stdio transport)'
-    required: true
+    description: 'Command to start the MCP server (for stdio transport, or to start HTTP server)'
+    required: false
+    default: ''
+  transport:
+    description: 'Transport type: stdio or streamable-http'
+    required: false
+    default: 'stdio'
+  server_url:
+    description: 'Server URL for HTTP transport (e.g., http://localhost:3000/mcp)'
+    required: false
+    default: ''
+  configurations:
+    description: 'JSON array of test configurations for multiple transports. Each object: name, transport, start_command, server_url, env_vars'
+    required: false
+    default: ''
+  compare_ref:
+    description: 'Git ref to compare against (auto-detects merge-base or previous tag if not set)'
+    required: false
+    default: ''
   env_vars:
     description: 'Environment variables (newline-separated KEY=VALUE pairs)'
     required: false
@@ -27,7 +44,7 @@ inputs:
 
 outputs:
   status:
-    description: 'Test status (passed or differences)'
+    description: 'Test status (passed, differences, or error)'
     value: ${{ steps.conformance.outputs.status }}
   report_path:
     description: 'Path to the conformance report'
@@ -40,7 +57,7 @@ runs:
       shell: bash
       run: |
         curl -sSL -o /tmp/mcp-conformance-test.sh \
-          https://raw.githubusercontent.com/sammorrowdrums/mcp-conformance-action/main/scripts/conformance-test.sh
+          https://raw.githubusercontent.com/sammorrowdrums/mcp-conformance-action/${{ github.action_ref || 'main' }}/scripts/conformance-test.sh
         chmod +x /tmp/mcp-conformance-test.sh
 
     - name: Set environment variables
@@ -57,13 +74,29 @@ runs:
         MCP_BUILD_COMMAND: ${{ inputs.build_command }}
         MCP_START_COMMAND: ${{ inputs.start_command }}
         MCP_SERVER_TIMEOUT: ${{ inputs.server_timeout }}
+        MCP_COMPARE_REF: ${{ inputs.compare_ref }}
+        MCP_TRANSPORT: ${{ inputs.transport }}
+        MCP_SERVER_URL: ${{ inputs.server_url }}
+        MCP_CONFIGURATIONS: ${{ inputs.configurations }}
+        GITHUB_REF: ${{ github.ref }}
       run: |
-        /tmp/mcp-conformance-test.sh > conformance-summary.txt 2>&1 || true
+        set +e
+        /tmp/mcp-conformance-test.sh > conformance-summary.txt 2>&1
+        exit_code=$?
+        set -e
         
         cat conformance-summary.txt
         
-        if grep -q "RESULT: ALL TESTS PASSED" conformance-summary.txt; then
+        if [ $exit_code -ne 0 ]; then
+          echo "status=error" >> $GITHUB_OUTPUT
+          echo "::error::Conformance test script failed with exit code $exit_code"
+          exit 1
+        elif grep -q "RESULT: ALL TESTS PASSED" conformance-summary.txt; then
           echo "status=passed" >> $GITHUB_OUTPUT
+        elif grep -q "ERROR\|FATAL\|Server failed" conformance-summary.txt; then
+          echo "status=error" >> $GITHUB_OUTPUT
+          echo "::error::Conformance test encountered errors"
+          exit 1
         else
           echo "status=differences" >> $GITHUB_OUTPUT
         fi
@@ -73,13 +106,19 @@ runs:
       run: |
         echo "# MCP Server Conformance Report" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "Comparing current branch against merge-base" >> $GITHUB_STEP_SUMMARY
+        if [ -n "${{ inputs.compare_ref }}" ]; then
+          echo "Comparing against: \`${{ inputs.compare_ref }}\`" >> $GITHUB_STEP_SUMMARY
+        elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          echo "Comparing tag against previous tag (auto-detected)" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "Comparing against merge-base with \`origin/main\`" >> $GITHUB_STEP_SUMMARY
+        fi
         echo "" >> $GITHUB_STEP_SUMMARY
         
         if [ -f conformance-report/CONFORMANCE_REPORT.md ]; then
           tail -n +5 conformance-report/CONFORMANCE_REPORT.md >> $GITHUB_STEP_SUMMARY
         else
-          echo "⚠️ Report file not found - check the workflow logs for errors" >> $GITHUB_STEP_SUMMARY
+          echo "Report file not found - check the workflow logs for errors" >> $GITHUB_STEP_SUMMARY
         fi
         
         echo "" >> $GITHUB_STEP_SUMMARY
@@ -87,9 +126,9 @@ runs:
         echo "" >> $GITHUB_STEP_SUMMARY
         
         if [ "${{ steps.conformance.outputs.status }}" = "passed" ]; then
-          echo "✅ **All conformance tests passed** - No behavioral differences detected." >> $GITHUB_STEP_SUMMARY
+          echo "**All conformance tests passed** - No behavioral differences detected." >> $GITHUB_STEP_SUMMARY
         else
-          echo "⚠️ **Differences detected** - Review the diffs above to ensure changes are intentional." >> $GITHUB_STEP_SUMMARY
+          echo "**Differences detected** - Review the diffs above to ensure changes are intentional." >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Common expected differences:" >> $GITHUB_STEP_SUMMARY
           echo "- New tools added" >> $GITHUB_STEP_SUMMARY
@@ -97,3 +136,11 @@ runs:
           echo "- New resources or prompts" >> $GITHUB_STEP_SUMMARY
           echo "- Capability changes" >> $GITHUB_STEP_SUMMARY
         fi
+
+    - name: Upload conformance report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: conformance-report
+        path: conformance-report/
+        if-no-files-found: ignore
