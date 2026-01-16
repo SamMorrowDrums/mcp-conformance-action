@@ -23,11 +23,21 @@ export default tseslint.config(
     },
   },
   {
-    // Test files don't need the project reference
+    // Test files don't need the project reference and need Jest globals
     files: ["**/__tests__/**/*.ts", "**/*.test.ts"],
     languageOptions: {
       parserOptions: {
         project: null,
+      },
+      globals: {
+        describe: "readonly",
+        it: "readonly",
+        expect: "readonly",
+        beforeEach: "readonly",
+        afterEach: "readonly",
+        beforeAll: "readonly",
+        afterAll: "readonly",
+        jest: "readonly",
       },
     },
   },
