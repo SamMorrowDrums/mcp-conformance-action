@@ -364,31 +364,71 @@ run_mcp_test_stdio() {
         export $cfg_env 2>/dev/null || true
     fi
     
-    # Run the server with all list commands plus custom messages
-    local output
-    output=$(
-        (
-            echo "$INIT_MSG"
-            echo "$INITIALIZED_MSG"
+    # Create named pipes for bidirectional communication
+    local fifo_in=$(mktemp -u)
+    local fifo_out=$(mktemp -u)
+    mkfifo "$fifo_in" "$fifo_out"
+    
+    # Start the server in background, reading from fifo_in, writing to fifo_out
+    # Redirect stderr to /dev/null to avoid mixing compilation output with JSON
+    (cd "$working_dir" && timeout "${SERVER_TIMEOUT}s" bash -c "$cmd" < "$fifo_in" > "$fifo_out" 2>/dev/null) &
+    local server_pid=$!
+    
+    # Open file descriptors for the pipes (keeps them open)
+    exec 3>"$fifo_in"   # fd 3 for writing to server
+    exec 4<"$fifo_out"  # fd 4 for reading from server
+    
+    # Phase 1: Send initialize and wait for response
+    # This ensures server is ready (important for `go run` which compiles first)
+    echo "$INIT_MSG" >&3
+    echo "$INITIALIZED_MSG" >&3
+    
+    # Wait for initialize response (read until we see id:1)
+    local init_done=false
+    local output=""
+    while IFS= read -r -t "$SERVER_TIMEOUT" line <&4; do
+        output+="$line"$'\n'
+        if echo "$line" | jq -e '.id == 1' >/dev/null 2>&1; then
+            init_done=true
+            break
+        fi
+    done
+    
+    if [ "$init_done" != "true" ]; then
+        log "    ${YELLOW}Warning: Initialize response not received${NC}"
+    fi
+    
+    # Phase 2: Send remaining messages now that server is ready
+    sleep 0.1
+    echo "$LIST_TOOLS_MSG" >&3
+    sleep 0.1
+    echo "$LIST_RESOURCES_MSG" >&3
+    sleep 0.1
+    echo "$LIST_PROMPTS_MSG" >&3
+    sleep 0.1
+    echo "$LIST_RESOURCE_TEMPLATES_MSG" >&3
+    
+    # Send custom messages if any
+    if [ -n "$cfg_custom_messages" ]; then
+        local msg_count=$(echo "$cfg_custom_messages" | jq -r 'length')
+        for ((m=0; m<msg_count; m++)); do
             sleep 0.1
-            echo "$LIST_TOOLS_MSG"
-            sleep 0.1
-            echo "$LIST_RESOURCES_MSG"
-            sleep 0.1
-            echo "$LIST_PROMPTS_MSG"
-            sleep 0.1
-            echo "$LIST_RESOURCE_TEMPLATES_MSG"
-            # Send custom messages if any
-            if [ -n "$cfg_custom_messages" ]; then
-                local msg_count=$(echo "$cfg_custom_messages" | jq -r 'length')
-                for ((m=0; m<msg_count; m++)); do
-                    sleep 0.1
-                    echo "$cfg_custom_messages" | jq -r ".[$m].message"
-                done
-            fi
-            sleep 0.5
-        ) | timeout "${SERVER_TIMEOUT}s" bash -c "cd '$working_dir' && $cmd" 2>&1 || true
-    )
+            echo "$cfg_custom_messages" | jq -r ".[$m].message" >&3
+        done
+    fi
+    
+    # Close input to signal EOF to server
+    exec 3>&-
+    
+    # Read remaining output with shorter timeout
+    while IFS= read -r -t 2 line <&4; do
+        output+="$line"$'\n'
+    done
+    
+    # Close read fd and cleanup
+    exec 4<&-
+    wait $server_pid 2>/dev/null || true
+    rm -f "$fifo_in" "$fifo_out"
     
     end_time=$(date +%s.%N 2>/dev/null || date +%s)
     duration=$(echo "$end_time - $start_time" | bc 2>/dev/null || echo "0")
