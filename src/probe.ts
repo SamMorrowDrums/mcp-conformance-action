@@ -8,6 +8,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import * as core from "@actions/core";
+import { z } from "zod";
 import type {
   ProbeResult,
   InitializeInfo,
@@ -158,12 +159,16 @@ export async function probeServer(options: ProbeOptions): Promise<ProbeResult> {
 
     // Send custom messages if provided
     if (options.customMessages && options.customMessages.length > 0) {
+      // Schema that accepts any response for custom messages
+      const anyResponseSchema = z.record(z.unknown());
+
       for (const customMsg of options.customMessages) {
         try {
-          // Cast the message to the expected type - custom messages bypass type safety
-          const response = await (
-            client as unknown as { request: (msg: unknown, opts: unknown) => Promise<unknown> }
-          ).request(customMsg.message, {});
+          // Cast message to the expected request type - custom messages should have a method field
+          const response = await client.request(
+            customMsg.message as { method: string; params?: Record<string, unknown> },
+            anyResponseSchema
+          );
           result.customResponses.set(customMsg.name, response);
           core.info(`  Custom message '${customMsg.name}' successful`);
         } catch (error) {
