@@ -165,21 +165,31 @@ wait_for_server() {
     local url="$1"
     local timeout="$2"
     local start_time=$(date +%s)
+    local attempt=0
+    
+    log "    Waiting for server at $url (timeout: ${timeout}s)..."
     
     while true; do
+        attempt=$((attempt + 1))
+        
         # Use MCP ping method to check if server is ready
         local response=$(curl -sf -X POST "$url" \
             -H "Content-Type: application/json" \
             -d "$PING_MSG" \
             --max-time 2 2>/dev/null)
+        local curl_exit=$?
         
         # Check if we got a valid JSON-RPC response
         if echo "$response" | jq -e '.jsonrpc == "2.0"' >/dev/null 2>&1; then
+            log "    ${GREEN}Server ready after $attempt attempts${NC}"
             return 0
         fi
         
         local elapsed=$(($(date +%s) - start_time))
         if [ $elapsed -ge $timeout ]; then
+            log "    ${RED}Timeout after ${elapsed}s ($attempt attempts)${NC}"
+            log "    Last curl exit code: $curl_exit"
+            log "    Last response: ${response:-<empty>}"
             return 1
         fi
         sleep 0.5
@@ -216,6 +226,8 @@ run_mcp_test_http() {
     # Start server if start_command provided (otherwise assume external server)
     if [ -n "$cfg_start_cmd" ]; then
         log "    Starting HTTP server..."
+        log "    Command: $cfg_start_cmd"
+        log "    URL: $cfg_server_url"
         
         # Start server in background and capture its actual PID
         # Use setsid to create new process group for clean termination
@@ -230,8 +242,16 @@ run_mcp_test_http() {
         ) &
         
         # Small delay to ensure PID file is written
-        sleep 0.2
+        sleep 0.5
         server_pid=$(cat "$pid_file" 2>/dev/null)
+        log "    Server PID: ${server_pid:-unknown}"
+        
+        # Verify process is running
+        if [ -n "$server_pid" ] && kill -0 $server_pid 2>/dev/null; then
+            log "    ${GREEN}Process is running${NC}"
+        else
+            log "    ${RED}Process not running!${NC}"
+        fi
         
         # Wait for server to be ready using MCP ping
         if ! wait_for_server "$cfg_server_url" "$SERVER_TIMEOUT"; then
