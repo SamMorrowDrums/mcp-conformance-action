@@ -397,10 +397,7 @@ describe("normalizeProbeResult", () => {
         { name: "z_tool", description: "Last" },
         { name: "a_tool", description: "First" },
       ],
-      resources: [
-        { uri: "file:///z.txt" },
-        { uri: "file:///a.txt" },
-      ],
+      resources: [{ uri: "file:///z.txt" }, { uri: "file:///a.txt" }],
     };
 
     const once = normalizeProbeResult(input);
