@@ -239,24 +239,52 @@ send_http_request() {
     local message="$2"
     local timeout="$3"
     
-    # Use process substitution with stdbuf to get unbuffered output
-    # The grep -m1 will exit after finding first match, terminating curl
-    # This handles SSE streams that keep connection open
-    local result
-    result=$(curl -sN -X POST "$url" \
-        -H "Content-Type: application/json" \
-        -d "$message" \
-        --max-time "$timeout" 2>/dev/null | \
-        stdbuf -oL grep -m1 -E '^data:|^\{' | \
-        sed 's/^data: *//' | \
-        head -n1)
+    # Create temp file for output
+    local tmp_file=$(mktemp)
     
-    # Return result or empty object
-    if [ -n "$result" ]; then
-        echo "$result"
+    # Use awk to parse SSE or plain JSON, then exit immediately
+    # This is more portable than bash regex and handles SSE streams well
+    (
+        curl -sN -X POST "$url" \
+            -H "Content-Type: application/json" \
+            -d "$message" \
+            --max-time "$timeout" 2>/dev/null | \
+        awk '/^data:/ { sub(/^data: */, ""); print; exit 0 } /^\{/ { print; exit 0 }'
+    ) > "$tmp_file" 2>/dev/null &
+    local bg_pid=$!
+    
+    # Wait for result with timeout (slightly less than curl timeout)
+    local wait_time=$((timeout - 1))
+    [ $wait_time -lt 1 ] && wait_time=1
+    
+    local count=0
+    while [ $count -lt $((wait_time * 10)) ]; do
+        # Check if we have output
+        if [ -s "$tmp_file" ]; then
+            kill $bg_pid 2>/dev/null || true
+            wait $bg_pid 2>/dev/null || true
+            cat "$tmp_file"
+            rm -f "$tmp_file"
+            return 0
+        fi
+        # Check if background process is still running
+        if ! kill -0 $bg_pid 2>/dev/null; then
+            break
+        fi
+        sleep 0.1
+        count=$((count + 1))
+    done
+    
+    # Cleanup and return what we have
+    kill $bg_pid 2>/dev/null || true
+    wait $bg_pid 2>/dev/null || true
+    
+    if [ -s "$tmp_file" ]; then
+        cat "$tmp_file"
     else
         echo "{}"
     fi
+    rm -f "$tmp_file"
 }
 
 # Function to run MCP server test via HTTP
