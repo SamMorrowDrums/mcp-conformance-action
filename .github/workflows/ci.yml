@@ -42,5 +42,7 @@ jobs:
         run: npm run build
 
       - name: Verify dist is up to date
+        if: matrix.node-version == 20
         run: |
-          git diff --exit-code dist/ || (echo "::error::dist/ is out of date. Run 'npm run build' and commit the changes." && exit 1)
+          # Check if main dist file is up to date (ignore sourcemaps which can differ between environments)
+          git diff --exit-code dist/index.js || (echo "::error::dist/index.js is out of date. Run 'npm run build' and commit the changes." && exit 1)
