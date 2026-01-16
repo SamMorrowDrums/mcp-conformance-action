@@ -17,6 +17,7 @@ set -e
 #   - Final report summary goes to stdout (for piping/capture)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROBE_DIR="$SCRIPT_DIR/../probe"
 PROJECT_DIR="$(pwd)"
 REPORT_DIR="$PROJECT_DIR/conformance-report"
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
@@ -46,6 +47,15 @@ log() {
     echo -e "$@" >&2
 }
 
+# Install probe dependencies (once at startup)
+setup_probe() {
+    log "Setting up MCP probe tool..."
+    if [ ! -d "$PROBE_DIR/node_modules" ]; then
+        (cd "$PROBE_DIR" && npm install --silent) >&2
+    fi
+    log "${GREEN}Probe ready${NC}"
+}
+
 log "${BLUE}=== MCP Server Conformance Test ===${NC}"
 log "Current branch: $CURRENT_BRANCH"
 log "Report directory: $REPORT_DIR"
@@ -56,6 +66,9 @@ if [ -z "$INSTALL_CMD" ]; then
     log "${RED}Error: MCP_INSTALL_COMMAND not set${NC}"
     exit 1
 fi
+
+# Setup probe tool
+setup_probe
 
 # Build configurations array
 declare -a CONFIGS
@@ -133,14 +146,8 @@ log ""
 rm -rf "$REPORT_DIR"
 mkdir -p "$REPORT_DIR"/{main,branch,diffs}
 
-# MCP JSON-RPC messages
-INIT_MSG='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"conformance-test","version":"1.0.0"}}}'
-INITIALIZED_MSG='{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}'
+# MCP JSON-RPC messages (for wait_for_server health check)
 PING_MSG='{"jsonrpc":"2.0","id":0,"method":"ping","params":{}}'
-LIST_TOOLS_MSG='{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
-LIST_RESOURCES_MSG='{"jsonrpc":"2.0","id":3,"method":"resources/list","params":{}}'
-LIST_PROMPTS_MSG='{"jsonrpc":"2.0","id":4,"method":"prompts/list","params":{}}'
-LIST_RESOURCE_TEMPLATES_MSG='{"jsonrpc":"2.0","id":5,"method":"resources/templates/list","params":{}}'
 
 # Function to normalize JSON for comparison
 # Sorts all arrays (including nested ones) and formats consistently
@@ -231,63 +238,7 @@ wait_for_server() {
     done
 }
 
-# Function to send MCP request via HTTP POST
-# Handles both plain JSON and SSE (Server-Sent Events) responses
-# For SSE, extracts JSON from the first "data:" line
-send_http_request() {
-    local url="$1"
-    local message="$2"
-    local timeout="$3"
-    
-    # Create temp file for output
-    local tmp_file=$(mktemp)
-    
-    # Use awk to parse SSE or plain JSON, then exit immediately
-    # This is more portable than bash regex and handles SSE streams well
-    (
-        curl -sN -X POST "$url" \
-            -H "Content-Type: application/json" \
-            -d "$message" \
-            --max-time "$timeout" 2>/dev/null | \
-        awk '/^data:/ { sub(/^data: */, ""); print; exit 0 } /^\{/ { print; exit 0 }'
-    ) > "$tmp_file" 2>/dev/null &
-    local bg_pid=$!
-    
-    # Wait for result with timeout (slightly less than curl timeout)
-    local wait_time=$((timeout - 1))
-    [ $wait_time -lt 1 ] && wait_time=1
-    
-    local count=0
-    while [ $count -lt $((wait_time * 10)) ]; do
-        # Check if we have output
-        if [ -s "$tmp_file" ]; then
-            kill $bg_pid 2>/dev/null || true
-            wait $bg_pid 2>/dev/null || true
-            cat "$tmp_file"
-            rm -f "$tmp_file"
-            return 0
-        fi
-        # Check if background process is still running
-        if ! kill -0 $bg_pid 2>/dev/null; then
-            break
-        fi
-        sleep 0.1
-        count=$((count + 1))
-    done
-    
-    # Cleanup and return what we have
-    kill $bg_pid 2>/dev/null || true
-    wait $bg_pid 2>/dev/null || true
-    
-    if [ -s "$tmp_file" ]; then
-        cat "$tmp_file"
-    else
-        echo "{}"
-    fi
-    rm -f "$tmp_file"
-}
-
-# Function to run MCP server test via HTTP
+# Function to run MCP server test via HTTP using probe
 run_mcp_test_http() {
     local working_dir="$1"
     local name="$2"
@@ -298,6 +249,7 @@ run_mcp_test_http() {
     
     local start_time end_time duration
     local server_pid=""
+    local output_dir=$(dirname "$output_prefix")
     
     start_time=$(date +%s.%N 2>/dev/null || date +%s)
     
@@ -307,8 +259,6 @@ run_mcp_test_http() {
         log "    Command: $cfg_start_cmd"
         log "    URL: $cfg_server_url"
         
-        # Start server in background in its own process group
-        # Using setsid ensures killing the server doesn't affect parent script
         cd "$working_dir"
         if [ -n "$cfg_env" ]; then
             export $cfg_env
@@ -317,18 +267,15 @@ run_mcp_test_http() {
         server_pid=$!
         cd "$PROJECT_DIR"
         
-        # Small delay to let server initialize
         sleep 0.5
         log "    Server PID: ${server_pid:-unknown}"
         
-        # Verify process is running
         if [ -n "$server_pid" ] && kill -0 $server_pid 2>/dev/null; then
             log "    ${GREEN}Process is running${NC}"
         else
             log "    ${RED}Process not running!${NC}"
         fi
         
-        # Wait for server to be ready using MCP ping
         if ! wait_for_server "$cfg_server_url" "$SERVER_TIMEOUT"; then
             log "    ${RED}Server failed to start${NC}"
             if [ -n "$server_pid" ]; then
@@ -340,41 +287,23 @@ run_mcp_test_http() {
         log "    ${GREEN}Server ready${NC}"
     fi
     
-    # Initialize
-    init_response=$(send_http_request "$cfg_server_url" "$INIT_MSG" "$SERVER_TIMEOUT")
-    echo "$init_response" | jq -S '.' > "${output_prefix}_initialize.json" 2>/dev/null
+    # Use probe to collect server capabilities
+    log "    Probing server..."
+    if ! npx --prefix "$PROBE_DIR" tsx "$PROBE_DIR/mcp-probe.ts" \
+        -transport streamable-http \
+        -url "$cfg_server_url" \
+        -out "$output_dir" 2>&1 | grep -v "^SUCCESS$" >&2; then
+        log "    ${RED}Probe failed${NC}"
+    fi
     
-    # Send initialized notification (no response expected)
-    send_http_request "$cfg_server_url" "$INITIALIZED_MSG" "$SERVER_TIMEOUT" >/dev/null 2>&1
-    
-    # List tools
-    tools_response=$(send_http_request "$cfg_server_url" "$LIST_TOOLS_MSG" "$SERVER_TIMEOUT")
-    echo "$tools_response" | jq -S '.' > "${output_prefix}_tools.json" 2>/dev/null
-    
-    # List resources
-    resources_response=$(send_http_request "$cfg_server_url" "$LIST_RESOURCES_MSG" "$SERVER_TIMEOUT")
-    echo "$resources_response" | jq -S '.' > "${output_prefix}_resources.json" 2>/dev/null
-    
-    # List prompts
-    prompts_response=$(send_http_request "$cfg_server_url" "$LIST_PROMPTS_MSG" "$SERVER_TIMEOUT")
-    echo "$prompts_response" | jq -S '.' > "${output_prefix}_prompts.json" 2>/dev/null
-    
-    # List resource templates
-    templates_response=$(send_http_request "$cfg_server_url" "$LIST_RESOURCE_TEMPLATES_MSG" "$SERVER_TIMEOUT")
-    echo "$templates_response" | jq -S '.' > "${output_prefix}_resource_templates.json" 2>/dev/null
-    
-    # Stop server if we started it - kill process group with SIGTERM first, then SIGKILL
-    # Using negative PID kills the entire process group created by setsid
+    # Stop server if we started it
     if [ -n "$server_pid" ]; then
         log "    Stopping server (PID: $server_pid)..."
         kill -TERM -- -$server_pid 2>/dev/null || true
-        # Give it a moment to shut down gracefully
         sleep 0.5
-        # Force kill if still running
         if kill -0 $server_pid 2>/dev/null; then
             kill -KILL -- -$server_pid 2>/dev/null || true
         fi
-        # Don't wait - process is in different group, let it die async
     fi
     
     end_time=$(date +%s.%N 2>/dev/null || date +%s)
@@ -382,13 +311,13 @@ run_mcp_test_http() {
     
     # Normalize all JSON files
     for endpoint in initialize tools resources prompts resource_templates; do
-        normalize_json "${output_prefix}_${endpoint}.json"
+        normalize_json "${output_dir}/output_${endpoint}.json"
     done
     
     echo "$duration"
 }
 
-# Function to run MCP server test via stdio
+# Function to run MCP server test via stdio using probe
 run_mcp_test_stdio() {
     local working_dir="$1"
     local name="$2"
@@ -398,136 +327,56 @@ run_mcp_test_stdio() {
     local cfg_custom_messages="$6"
     
     local start_time end_time duration
+    local output_dir=$(dirname "$output_prefix")
+    
     start_time=$(date +%s.%N 2>/dev/null || date +%s)
     
-    # Build the command with optional env vars
-    local cmd="$cfg_start_cmd"
+    # Build the full command path
+    local full_cmd="$cfg_start_cmd"
     if [ -n "$cfg_env" ]; then
-        # Export each env var properly
-        cmd="$cfg_start_cmd"
         export $cfg_env 2>/dev/null || true
     fi
     
-    # Create named pipes for bidirectional communication
-    local fifo_in=$(mktemp -u)
-    local fifo_out=$(mktemp -u)
-    mkfifo "$fifo_in" "$fifo_out"
+    # Parse command into executable and args for the probe
+    local cmd_exe=$(echo "$full_cmd" | awk '{print $1}')
+    local cmd_args=$(echo "$full_cmd" | cut -d' ' -f2- 2>/dev/null)
+    [ "$cmd_args" = "$cmd_exe" ] && cmd_args=""
     
-    # Start the server in background, reading from fifo_in, writing to fifo_out
-    # Redirect stderr to /dev/null to avoid mixing compilation output with JSON
-    (cd "$working_dir" && timeout "${SERVER_TIMEOUT}s" bash -c "$cmd" < "$fifo_in" > "$fifo_out" 2>/dev/null) &
-    local server_pid=$!
-    
-    # Open file descriptors for the pipes (keeps them open)
-    exec 3>"$fifo_in"   # fd 3 for writing to server
-    exec 4<"$fifo_out"  # fd 4 for reading from server
-    
-    # Phase 1: Send initialize and wait for response
-    # This ensures server is ready (important for `go run` which compiles first)
-    echo "$INIT_MSG" >&3
-    echo "$INITIALIZED_MSG" >&3
-    
-    # Wait for initialize response (read until we see id:1)
-    local init_done=false
-    local output=""
-    while IFS= read -r -t "$SERVER_TIMEOUT" line <&4; do
-        output+="$line"$'\n'
-        if echo "$line" | jq -e '.id == 1' >/dev/null 2>&1; then
-            init_done=true
-            break
-        fi
-    done
-    
-    if [ "$init_done" != "true" ]; then
-        log "    ${YELLOW}Warning: Initialize response not received${NC}"
+    # If the command is relative, make it relative to working_dir
+    if [[ "$cmd_exe" != /* ]]; then
+        cmd_exe="$working_dir/$cmd_exe"
     fi
     
-    # Phase 2: Send remaining messages now that server is ready
-    sleep 0.1
-    echo "$LIST_TOOLS_MSG" >&3
-    sleep 0.1
-    echo "$LIST_RESOURCES_MSG" >&3
-    sleep 0.1
-    echo "$LIST_PROMPTS_MSG" >&3
-    sleep 0.1
-    echo "$LIST_RESOURCE_TEMPLATES_MSG" >&3
+    # Use probe to collect server capabilities
+    log "    Probing server (stdio)..."
+    log "    Command: $cmd_exe $cmd_args"
     
-    # Send custom messages if any
-    if [ -n "$cfg_custom_messages" ]; then
-        local msg_count=$(echo "$cfg_custom_messages" | jq -r 'length')
-        for ((m=0; m<msg_count; m++)); do
-            sleep 0.1
-            echo "$cfg_custom_messages" | jq -r ".[$m].message" >&3
-        done
+    local probe_args="-transport stdio -command $cmd_exe -out $output_dir"
+    if [ -n "$cmd_args" ]; then
+        probe_args="$probe_args -args $cmd_args"
     fi
     
-    # Close input to signal EOF to server
-    exec 3>&-
-    
-    # Read remaining output with shorter timeout
-    while IFS= read -r -t 2 line <&4; do
-        output+="$line"$'\n'
-    done
-    
-    # Close read fd and cleanup
-    exec 4<&-
-    wait $server_pid 2>/dev/null || true
-    rm -f "$fifo_in" "$fifo_out"
+    if ! npx --prefix "$PROBE_DIR" tsx "$PROBE_DIR/mcp-probe.ts" $probe_args 2>&1 | grep -v "^SUCCESS$" >&2; then
+        log "    ${YELLOW}Warning: Probe may have encountered issues${NC}"
+    fi
     
     end_time=$(date +%s.%N 2>/dev/null || date +%s)
     duration=$(echo "$end_time - $start_time" | bc 2>/dev/null || echo "0")
     
-    # Parse and save each response by matching JSON-RPC id
-    # Use process substitution to avoid subshell issues with while loop
-    while IFS= read -r line; do
-        [ -z "$line" ] && continue
-        local id
-        id=$(echo "$line" | jq -r '.id // empty' 2>/dev/null)
-        case "$id" in
-            1) echo "$line" | jq -S '.' > "${output_prefix}_initialize.json" 2>/dev/null ;;
-            2) echo "$line" | jq -S '.' > "${output_prefix}_tools.json" 2>/dev/null ;;
-            3) echo "$line" | jq -S '.' > "${output_prefix}_resources.json" 2>/dev/null ;;
-            4) echo "$line" | jq -S '.' > "${output_prefix}_prompts.json" 2>/dev/null ;;
-            5) echo "$line" | jq -S '.' > "${output_prefix}_resource_templates.json" 2>/dev/null ;;
-            *)
-                # Check if it's a custom message response
-                if [ -n "$cfg_custom_messages" ] && [ -n "$id" ]; then
-                    local msg_name
-                    msg_name=$(echo "$cfg_custom_messages" | jq -r ".[] | select(.message.id == $id) | .name" 2>/dev/null)
-                    if [ -n "$msg_name" ]; then
-                        echo "$line" | jq -S '.' > "${output_prefix}_custom_${msg_name}.json" 2>/dev/null
-                    fi
-                fi
-                ;;
-        esac
-    done <<< "$output"
-    
     # Create empty files if not created
-    touch "${output_prefix}_initialize.json" "${output_prefix}_tools.json" \
-          "${output_prefix}_resources.json" "${output_prefix}_prompts.json" \
-          "${output_prefix}_resource_templates.json"
-    
-    # Create empty files for custom messages too
-    if [ -n "$cfg_custom_messages" ]; then
-        local msg_count=$(echo "$cfg_custom_messages" | jq -r 'length')
-        for ((m=0; m<msg_count; m++)); do
-            local msg_name=$(echo "$cfg_custom_messages" | jq -r ".[$m].name")
-            touch "${output_prefix}_custom_${msg_name}.json"
-        done
-    fi
+    touch "${output_dir}/output_initialize.json" "${output_dir}/output_tools.json" \
+          "${output_dir}/output_resources.json" "${output_dir}/output_prompts.json" \
+          "${output_dir}/output_resource_templates.json"
     
     # Normalize all JSON files for consistent comparison
     for endpoint in initialize tools resources prompts resource_templates; do
-        normalize_json "${output_prefix}_${endpoint}.json"
+        normalize_json "${output_dir}/output_${endpoint}.json"
     done
     
-    # Normalize custom message responses
+    # Note: Custom messages not yet supported by probe
+    # TODO: Add custom message support to probe if needed
     if [ -n "$cfg_custom_messages" ]; then
-        local msg_count=$(echo "$cfg_custom_messages" | jq -r 'length')
-        for ((m=0; m<msg_count; m++)); do
-            local msg_name=$(echo "$cfg_custom_messages" | jq -r ".[$m].name")
-            normalize_json "${output_prefix}_custom_${msg_name}.json"
-        done
+        log "    ${YELLOW}Note: Custom messages not yet supported by probe${NC}"
     fi
     
     echo "$duration"
