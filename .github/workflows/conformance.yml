@@ -151,8 +151,14 @@ jobs:
 
       - name: Download conformance test script
         run: |
+          # Use the same SHA as this workflow to ensure script version matches
+          SCRIPT_SHA="${{ github.job_workflow_sha }}"
+          if [ -z "$SCRIPT_SHA" ]; then
+            SCRIPT_SHA="main"
+          fi
+          echo "Downloading conformance script at SHA: $SCRIPT_SHA"
           curl -sSL -o /tmp/mcp-conformance-test.sh \
-            https://raw.githubusercontent.com/sammorrowdrums/mcp-conformance-action/main/scripts/conformance-test.sh
+            "https://raw.githubusercontent.com/sammorrowdrums/mcp-conformance-action/${SCRIPT_SHA}/scripts/conformance-test.sh"
           chmod +x /tmp/mcp-conformance-test.sh
 
       - name: Set environment variables
