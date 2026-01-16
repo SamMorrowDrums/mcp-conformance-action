@@ -1,6 +1,8 @@
 # Dependencies
-probe/node_modules/
+node_modules/
 
 # Build artifacts
 *.log
-node_modules
+
+# Test outputs
+conformance-report/

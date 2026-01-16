@@ -32,27 +32,49 @@ Thank you for your interest in contributing! This document provides guidelines f
 
 ### Prerequisites
 
-- Bash 4.0+
-- jq
+- Node.js 20+
+- npm
 - Git
+
+### Building
+
+```bash
+# Install dependencies
+npm ci
+
+# Run tests
+npm test
+
+# Type check, lint, and format
+npm run check
+
+# Build the action
+npm run build
+```
 
 ### Testing Locally
 
-```bash
-# Set required environment variables
-export MCP_INSTALL_COMMAND="npm install"
-export MCP_BUILD_COMMAND="npm run build"
-export MCP_START_COMMAND="node dist/stdio.js"
+To test the action locally, you can run the built action directly:
 
-# Run the conformance test
-./scripts/conformance-test.sh
+```bash
+# Build the action
+npm run build
+
+# Set environment variables that mimic GitHub Actions inputs
+export INPUT_INSTALL_COMMAND="npm ci"
+export INPUT_BUILD_COMMAND="npm run build"
+export INPUT_START_COMMAND="node dist/stdio.js"
+
+# Run the action
+node dist/index.js
 ```
 
 ## Code Style
 
-- Use shellcheck for bash scripts
-- Add comments for complex logic
-- Keep functions small and focused
+- TypeScript with strict mode
+- ESLint for linting
+- Prettier for formatting
+- Run `npm run check` before submitting PRs
 
 ## License
 

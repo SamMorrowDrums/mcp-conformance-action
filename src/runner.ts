@@ -48,7 +48,21 @@ export function parseConfigurations(
     if (!Array.isArray(configs) || configs.length === 0) {
       throw new Error("Configurations must be a non-empty array");
     }
-    return configs;
+
+    // Apply defaults to each configuration
+    return configs.map((config) => {
+      const transport = config.transport || defaultTransport;
+      return {
+        ...config,
+        transport,
+        // For stdio, use default command if not specified (appending args if needed)
+        start_command:
+          transport === "stdio" ? config.start_command || defaultCommand : config.start_command,
+        // For HTTP, use default URL if not specified
+        server_url:
+          transport === "streamable-http" ? config.server_url || defaultUrl : config.server_url,
+      };
+    });
   } catch (error) {
     core.warning(`Failed to parse configurations: ${error}`);
     // Return default
