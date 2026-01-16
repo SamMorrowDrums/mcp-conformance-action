@@ -4,18 +4,18 @@
 [![GitHub release](https://img.shields.io/github/v/release/SamMorrowDrums/mcp-conformance-action)](https://github.com/SamMorrowDrums/mcp-conformance-action/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A GitHub Action for testing [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server conformance between versions. This action detects behavioral changes in your MCP server by comparing the current branch against a base reference, helping you catch unintended regressions and document intentional API changes.
+A GitHub Action for detecting changes to [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server **public interfaces**. This action compares the current branch against a baseline to surface any changes to your server's exposed tools, resources, prompts, and capabilities—helping you catch unintended breaking changes and document intentional API evolution.
 
 ## Overview
 
-MCP servers expose tools, resources, and prompts to AI assistants. As these servers evolve, it's critical to understand how changes affect their external behavior. This action automates conformance testing by:
+MCP servers expose a **public interface** to AI assistants: tools (with their input schemas), resources, prompts, and server capabilities. As your server evolves, changes to this interface can break clients or alter expected behavior. This action automates public interface comparison by:
 
 1. Building your MCP server from both the current branch and a baseline (merge-base, tag, or specified ref)
-2. Sending identical MCP protocol requests to both versions
-3. Comparing responses and generating a detailed diff report
+2. Querying both versions for their complete public interface (tools, resources, prompts, capabilities)
+3. Generating a detailed diff report showing exactly what changed
 4. Surfacing results directly in GitHub's Job Summary
 
-The action is **language-agnostic**—it executes whatever install, build, and start commands you provide.
+This is **not** about testing internal logic or correctness—it's about visibility into what your server _advertises_ to clients.
 
 ## Quick Start
 
@@ -232,7 +232,16 @@ When using `configurations`, each object supports:
 
 ### What Gets Compared
 
-The action compares JSON responses from both server versions for each MCP method. Differences appear as unified diffs in the report. Common expected differences include:
+The action queries the **public interface** of both server versions and compares the responses:
+
+| Method | What It Reveals |
+|--------|----------------|
+| `initialize` | Server name, version, capabilities |
+| `tools/list` | Available tools and their JSON schemas |
+| `resources/list` | Exposed resources |
+| `prompts/list` | Available prompts |
+
+Differences appear as unified diffs in the report. Common changes include:
 
 - New tools, resources, or prompts added
 - Schema changes (new parameters, updated descriptions)
