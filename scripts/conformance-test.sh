@@ -160,19 +160,39 @@ normalize_json() {
     fi
 }
 
-# Function to wait for HTTP server to be ready using MCP ping
+# Function to wait for HTTP server to be ready
+# Supports both Streamable HTTP (with /health endpoint) and basic HTTP
 wait_for_server() {
     local url="$1"
     local timeout="$2"
     local start_time=$(date +%s)
     local attempt=0
     
+    # Extract base URL for health check (remove path like /mcp)
+    local base_url=$(echo "$url" | sed 's|\(/[^/]*\)$||')
+    local health_url="${base_url}/health"
+    
     log "    Waiting for server at $url (timeout: ${timeout}s)..."
+    log "    Health check URL: $health_url"
     
     while true; do
         attempt=$((attempt + 1))
         
-        # Use MCP ping method to check if server is ready
+        # Strategy 1: Try /health endpoint first (for Streamable HTTP servers)
+        local health_response=$(curl -sf -X GET "$health_url" \
+            -H "Accept: application/json" \
+            --max-time 2 2>/dev/null)
+        local health_exit=$?
+        
+        if [ $health_exit -eq 0 ] && [ -n "$health_response" ]; then
+            # Check if health response is valid JSON with status field
+            if echo "$health_response" | jq -e '.status' >/dev/null 2>&1; then
+                log "    ${GREEN}Server ready via /health after $attempt attempts${NC}"
+                return 0
+            fi
+        fi
+        
+        # Strategy 2: Try POST to the MCP endpoint (for basic HTTP servers)
         local response=$(curl -sf -X POST "$url" \
             -H "Content-Type: application/json" \
             -d "$PING_MSG" \
@@ -181,15 +201,28 @@ wait_for_server() {
         
         # Check if we got a valid JSON-RPC response
         if echo "$response" | jq -e '.jsonrpc == "2.0"' >/dev/null 2>&1; then
-            log "    ${GREEN}Server ready after $attempt attempts${NC}"
+            log "    ${GREEN}Server ready via MCP ping after $attempt attempts${NC}"
+            return 0
+        fi
+        
+        # Strategy 3: Check if server responds at all (HTTP 200 with any body)
+        local any_response=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "$url" \
+            -H "Content-Type: application/json" \
+            -d "$PING_MSG" \
+            --max-time 2 2>/dev/null)
+        
+        if [ "$any_response" = "200" ]; then
+            log "    ${GREEN}Server responding (HTTP 200) after $attempt attempts${NC}"
             return 0
         fi
         
         local elapsed=$(($(date +%s) - start_time))
         if [ $elapsed -ge $timeout ]; then
             log "    ${RED}Timeout after ${elapsed}s ($attempt attempts)${NC}"
-            log "    Last curl exit code: $curl_exit"
-            log "    Last response: ${response:-<empty>}"
+            log "    Last health exit: $health_exit, response: ${health_response:-<empty>}"
+            log "    Last MCP exit: $curl_exit, response: ${response:-<empty>}"
+            log "    Last HTTP status: $any_response"
             return 1
         fi
         sleep 0.5
