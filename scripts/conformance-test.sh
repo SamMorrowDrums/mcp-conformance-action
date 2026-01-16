@@ -31,6 +31,7 @@ GH_REF="${GITHUB_REF:-}"
 TRANSPORT="${MCP_TRANSPORT:-stdio}"
 SERVER_URL="${MCP_SERVER_URL:-}"
 CONFIGURATIONS="${MCP_CONFIGURATIONS:-}"
+CUSTOM_MESSAGES="${MCP_CUSTOM_MESSAGES:-}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -349,6 +350,7 @@ run_mcp_test_stdio() {
     local output_prefix="$3"
     local cfg_start_cmd="$4"
     local cfg_env="$5"
+    local cfg_custom_messages="$6"
     
     local start_time end_time duration
     start_time=$(date +%s.%N 2>/dev/null || date +%s)
@@ -359,7 +361,20 @@ run_mcp_test_stdio() {
         cmd="export $cfg_env && $cfg_start_cmd"
     fi
     
-    # Run the server with all list commands
+    # Build custom messages script if provided
+    local custom_msg_script=""
+    local custom_msg_names=""
+    if [ -n "$cfg_custom_messages" ]; then
+        local msg_count=$(echo "$cfg_custom_messages" | jq -r 'length')
+        for ((m=0; m<msg_count; m++)); do
+            local msg=$(echo "$cfg_custom_messages" | jq -r ".[$m].message | @json")
+            local msg_name=$(echo "$cfg_custom_messages" | jq -r ".[$m].name")
+            custom_msg_script="${custom_msg_script}sleep 0.1; echo ${msg}; "
+            custom_msg_names="${custom_msg_names} ${msg_name}"
+        done
+    fi
+    
+    # Run the server with all list commands plus custom messages
     output=$(
         (
             echo "$INIT_MSG"
@@ -372,12 +387,31 @@ run_mcp_test_stdio() {
             echo "$LIST_PROMPTS_MSG"
             sleep 0.1
             echo "$LIST_RESOURCE_TEMPLATES_MSG"
+            # Send custom messages if any
+            if [ -n "$cfg_custom_messages" ]; then
+                local msg_count=$(echo "$cfg_custom_messages" | jq -r 'length')
+                for ((m=0; m<msg_count; m++)); do
+                    sleep 0.1
+                    echo "$cfg_custom_messages" | jq -r ".[$m].message"
+                done
+            fi
             sleep 0.5
         ) | timeout "${SERVER_TIMEOUT}s" bash -c "cd '$working_dir' && $cmd" 2>/dev/null || true
     )
     
     end_time=$(date +%s.%N 2>/dev/null || date +%s)
     duration=$(echo "$end_time - $start_time" | bc 2>/dev/null || echo "0")
+    
+    # Build a map of custom message IDs to names
+    declare -A custom_msg_map
+    if [ -n "$cfg_custom_messages" ]; then
+        local msg_count=$(echo "$cfg_custom_messages" | jq -r 'length')
+        for ((m=0; m<msg_count; m++)); do
+            local msg_id=$(echo "$cfg_custom_messages" | jq -r ".[$m].message.id")
+            local msg_name=$(echo "$cfg_custom_messages" | jq -r ".[$m].name")
+            custom_msg_map[$msg_id]="$msg_name"
+        done
+    fi
     
     # Parse and save each response by matching JSON-RPC id
     echo "$output" | while IFS= read -r line; do
@@ -389,6 +423,15 @@ run_mcp_test_stdio() {
             3) echo "$line" | jq -S '.' > "${output_prefix}_resources.json" 2>/dev/null ;;
             4) echo "$line" | jq -S '.' > "${output_prefix}_prompts.json" 2>/dev/null ;;
             5) echo "$line" | jq -S '.' > "${output_prefix}_resource_templates.json" 2>/dev/null ;;
+            *)
+                # Check if it's a custom message response
+                if [ -n "$cfg_custom_messages" ]; then
+                    local msg_name=$(echo "$cfg_custom_messages" | jq -r ".[] | select(.message.id == $id) | .name" 2>/dev/null)
+                    if [ -n "$msg_name" ]; then
+                        echo "$line" | jq -S '.' > "${output_prefix}_${msg_name}.json" 2>/dev/null
+                    fi
+                fi
+                ;;
         esac
     done
     
@@ -397,10 +440,28 @@ run_mcp_test_stdio() {
           "${output_prefix}_resources.json" "${output_prefix}_prompts.json" \
           "${output_prefix}_resource_templates.json"
     
+    # Create empty files for custom messages too
+    if [ -n "$cfg_custom_messages" ]; then
+        local msg_count=$(echo "$cfg_custom_messages" | jq -r 'length')
+        for ((m=0; m<msg_count; m++)); do
+            local msg_name=$(echo "$cfg_custom_messages" | jq -r ".[$m].name")
+            touch "${output_prefix}_${msg_name}.json"
+        done
+    fi
+    
     # Normalize all JSON files for consistent comparison
     for endpoint in initialize tools resources prompts resource_templates; do
         normalize_json "${output_prefix}_${endpoint}.json"
     done
+    
+    # Normalize custom message responses
+    if [ -n "$cfg_custom_messages" ]; then
+        local msg_count=$(echo "$cfg_custom_messages" | jq -r 'length')
+        for ((m=0; m<msg_count; m++)); do
+            local msg_name=$(echo "$cfg_custom_messages" | jq -r ".[$m].name")
+            normalize_json "${output_prefix}_${msg_name}.json"
+        done
+    fi
     
     echo "$duration"
 }
@@ -416,11 +477,16 @@ run_mcp_test() {
     local cfg_start_cmd=$(echo "$config" | jq -r '.start_command // empty')
     local cfg_server_url=$(echo "$config" | jq -r '.server_url // empty')
     local cfg_env=$(echo "$config" | jq -r '.env_vars // empty')
+    # Get custom messages - either from config or global
+    local cfg_custom_messages=$(echo "$config" | jq -c '.custom_messages // empty')
+    if [ -z "$cfg_custom_messages" ] || [ "$cfg_custom_messages" = "null" ]; then
+        cfg_custom_messages="$CUSTOM_MESSAGES"
+    fi
     
     if [ "$cfg_transport" = "http" ]; then
         run_mcp_test_http "$working_dir" "$name" "$output_prefix" "$cfg_start_cmd" "$cfg_server_url" "$cfg_env"
     else
-        run_mcp_test_stdio "$working_dir" "$name" "$output_prefix" "$cfg_start_cmd" "$cfg_env"
+        run_mcp_test_stdio "$working_dir" "$name" "$output_prefix" "$cfg_start_cmd" "$cfg_env" "$cfg_custom_messages"
     fi
 }
 
@@ -516,10 +582,23 @@ log "${YELLOW}Generating comparison report...${NC}"
 
 total_diff_count=0
 total_ok_count=0
-endpoints="initialize tools resources prompts resource_templates"
+base_endpoints="initialize tools resources prompts resource_templates"
 
 for config in "${CONFIGS[@]}"; do
     cfg_name=$(echo "$config" | jq -r '.name')
+    
+    # Build endpoint list for this config (base + custom message names)
+    endpoints="$base_endpoints"
+    cfg_custom_messages=$(echo "$config" | jq -r '.custom_messages // empty')
+    if [ -z "$cfg_custom_messages" ] && [ -n "$CUSTOM_MESSAGES" ]; then
+        cfg_custom_messages="$CUSTOM_MESSAGES"
+    fi
+    if [ -n "$cfg_custom_messages" ]; then
+        custom_names=$(echo "$cfg_custom_messages" | jq -r '.[].name' 2>/dev/null || true)
+        for cname in $custom_names; do
+            endpoints="$endpoints custom_$cname"
+        done
+    fi
     
     mkdir -p "$REPORT_DIR/diffs/$cfg_name"
     config_diffs[$cfg_name]=false
@@ -624,7 +703,20 @@ if [ $total_diff_count -gt 0 ]; then
             echo "### $cfg_name" >> "$REPORT_FILE"
             echo "" >> "$REPORT_FILE"
             
-            for endpoint in $endpoints; do
+            # Build endpoint list for this config (base + custom message names)
+            cfg_endpoints="$base_endpoints"
+            cfg_custom_messages=$(echo "$config" | jq -r '.custom_messages // empty')
+            if [ -z "$cfg_custom_messages" ] && [ -n "$CUSTOM_MESSAGES" ]; then
+                cfg_custom_messages="$CUSTOM_MESSAGES"
+            fi
+            if [ -n "$cfg_custom_messages" ]; then
+                custom_names=$(echo "$cfg_custom_messages" | jq -r '.[].name' 2>/dev/null || true)
+                for cname in $custom_names; do
+                    cfg_endpoints="$cfg_endpoints custom_$cname"
+                done
+            fi
+            
+            for endpoint in $cfg_endpoints; do
                 diff_file="$REPORT_DIR/diffs/$cfg_name/${endpoint}.diff"
                 if [ -f "$diff_file" ] && [ -s "$diff_file" ]; then
                     echo "#### ${endpoint}" >> "$REPORT_FILE"
@@ -659,7 +751,20 @@ for config in "${CONFIGS[@]}"; do
 
 EOF
     
-    for endpoint in $endpoints; do
+    # Build endpoint list for this config (base + custom message names)
+    cfg_endpoints="$base_endpoints"
+    cfg_custom_messages=$(echo "$config" | jq -r '.custom_messages // empty')
+    if [ -z "$cfg_custom_messages" ] && [ -n "$CUSTOM_MESSAGES" ]; then
+        cfg_custom_messages="$CUSTOM_MESSAGES"
+    fi
+    if [ -n "$cfg_custom_messages" ]; then
+        custom_names=$(echo "$cfg_custom_messages" | jq -r '.[].name' 2>/dev/null || true)
+        for cname in $custom_names; do
+            cfg_endpoints="$cfg_endpoints custom_$cname"
+        done
+    fi
+    
+    for endpoint in $cfg_endpoints; do
         main_file="$REPORT_DIR/main/$cfg_name/output_${endpoint}.json"
         branch_file="$REPORT_DIR/branch/$cfg_name/output_${endpoint}.json"
         
