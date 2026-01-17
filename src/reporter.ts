@@ -59,14 +59,14 @@ export function generateMarkdownReport(report: ConformanceReport): string {
 
   // Overall status
   if (report.diffCount === 0) {
-    lines.push("## ✅ All Conformance Tests Passed");
+    lines.push("## ✅ No API Changes");
     lines.push("");
-    lines.push("No API differences detected between the current branch and the comparison ref.");
+    lines.push("No differences detected between the current branch and the comparison ref.");
   } else {
-    lines.push("## ⚠️ API Differences Detected");
+    lines.push("## 📋 API Changes Detected");
     lines.push("");
     lines.push(
-      `${report.diffCount} configuration(s) have API differences that may indicate breaking changes.`
+      `${report.diffCount} configuration(s) have changes. Review below to ensure they are intentional.`
     );
   }
   lines.push("");
@@ -85,18 +85,15 @@ export function generateMarkdownReport(report: ConformanceReport): string {
     lines.push("");
 
     if (result.hasDifferences) {
-      lines.push("#### Differences");
+      lines.push("#### Changes");
       lines.push("");
 
       for (const [endpoint, diff] of result.diffs) {
-        lines.push(`<details>`);
-        lines.push(`<summary><strong>${endpoint}</strong></summary>`);
+        lines.push(`**${endpoint}**`);
         lines.push("");
         lines.push("```diff");
         lines.push(diff);
         lines.push("```");
-        lines.push("");
-        lines.push("</details>");
         lines.push("");
       }
     } else {
@@ -177,16 +174,16 @@ export function generatePRSummary(report: ConformanceReport): string {
   const lines: string[] = [];
 
   if (report.diffCount === 0) {
-    lines.push("## ✅ MCP Conformance: All Tests Passed");
+    lines.push("## ✅ MCP Conformance: No Changes");
     lines.push("");
     lines.push(
-      `Tested ${report.results.length} configuration(s) - no API breaking changes detected.`
+      `Tested ${report.results.length} configuration(s) - no API changes detected.`
     );
   } else {
-    lines.push("## ⚠️ MCP Conformance: API Differences Detected");
+    lines.push("## 📋 MCP Conformance: API Changes Detected");
     lines.push("");
     lines.push(
-      `**${report.diffCount}** of ${report.results.length} configuration(s) have differences.`
+      `**${report.diffCount}** of ${report.results.length} configuration(s) have changes.`
     );
     lines.push("");
     lines.push("### Changed Endpoints");

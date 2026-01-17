@@ -7,7 +7,7 @@
 
 import * as core from "@actions/core";
 import * as exec from "@actions/exec";
-import { getCurrentBranch, determineCompareRef } from "./git.js";
+import { getCurrentBranch, determineCompareRef, getRefDisplayName } from "./git.js";
 import { parseConfigurations, parseCustomMessages, parseHeaders, runAllTests } from "./runner.js";
 import { generateReport, generateMarkdownReport, saveReport } from "./reporter.js";
 import type { ActionInputs } from "./types.js";
@@ -80,6 +80,7 @@ function getInputs(): ActionInputs {
     // Test configuration
     compareRef: getInput("compare_ref"),
     failOnError: getBooleanInput("fail_on_error") !== false, // default true
+    failOnDiff: getBooleanInput("fail_on_diff") === true, // default false
     envVars: getInput("env_vars"),
     serverTimeout: parseInt(getInput("server_timeout") || "30000", 10),
   };
@@ -225,11 +226,12 @@ async function run(): Promise<void> {
     // Determine comparison ref
     const currentBranch = await getCurrentBranch();
     const compareRef = await determineCompareRef(inputs.compareRef, process.env.GITHUB_REF);
+    const compareRefDisplay = await getRefDisplayName(compareRef);
 
     core.info("");
     core.info(`📊 Comparison:`);
     core.info(`  Current: ${currentBranch}`);
-    core.info(`  Compare: ${compareRef}`);
+    core.info(`  Compare: ${compareRefDisplay}${compareRefDisplay !== compareRef ? ` (${compareRef.substring(0, 7)})` : ""}`);
 
     // Run all tests
     core.info("");
@@ -246,7 +248,7 @@ async function run(): Promise<void> {
     core.info("");
     core.info("📝 Generating report...");
 
-    const report = generateReport(results, currentBranch, compareRef);
+    const report = generateReport(results, currentBranch, compareRefDisplay);
     const markdown = generateMarkdownReport(report);
     saveReport(report, markdown, workDir);
 
@@ -260,12 +262,16 @@ async function run(): Promise<void> {
       const errorConfigs = results.filter((r) => r.diffs.has("error")).map((r) => r.configName);
       core.setFailed(`❌ Probe errors occurred in: ${errorConfigs.join(", ")}`);
     } else if (report.diffCount > 0) {
-      core.warning(`⚠️ ${report.diffCount} configuration(s) have API differences`);
+      if (inputs.failOnDiff) {
+        core.setFailed(`❌ ${report.diffCount} configuration(s) have API changes`);
+      } else {
+        core.info(`📋 ${report.diffCount} configuration(s) have API changes`);
+      }
       if (hasErrors) {
         core.warning("Some configurations had probe errors (fail_on_error is disabled)");
       }
     } else {
-      core.info("✅ All conformance tests passed!");
+      core.info("✅ All conformance tests passed - no API changes detected");
     }
   } catch (error) {
     core.setFailed(`Action failed: ${error}`);

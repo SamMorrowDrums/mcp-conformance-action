@@ -30,3 +30,8 @@ export declare function checkout(ref: string): Promise<void>;
  * Checkout previous branch/ref
  */
 export declare function checkoutPrevious(): Promise<void>;
+/**
+ * Get a display-friendly name for a ref.
+ * Returns branch/tag name if available, otherwise the short SHA.
+ */
+export declare function getRefDisplayName(ref: string): Promise<string>;

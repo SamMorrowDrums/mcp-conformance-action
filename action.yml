@@ -104,6 +104,10 @@ inputs:
     description: 'Fail the action if probe errors occur (not just API differences)'
     required: false
     default: 'true'
+  fail_on_diff:
+    description: 'Fail the action if API differences are detected (useful for release validation)'
+    required: false
+    default: 'false'
   env_vars:
     description: 'Environment variables (newline-separated KEY=VALUE pairs)'
     required: false
@@ -232,15 +236,9 @@ runs:
         echo "" >> $GITHUB_STEP_SUMMARY
         
         if [ "${{ steps.conformance.outputs.status }}" = "passed" ]; then
-          echo "**All conformance tests passed** - No behavioral differences detected." >> $GITHUB_STEP_SUMMARY
+          echo "**No API changes detected** between the branches." >> $GITHUB_STEP_SUMMARY
         else
-          echo "**Differences detected** - Review the diffs above to ensure changes are intentional." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Common expected differences:" >> $GITHUB_STEP_SUMMARY
-          echo "- New tools added" >> $GITHUB_STEP_SUMMARY
-          echo "- Tool descriptions updated" >> $GITHUB_STEP_SUMMARY
-          echo "- New resources or prompts" >> $GITHUB_STEP_SUMMARY
-          echo "- Capability changes" >> $GITHUB_STEP_SUMMARY
+          echo "**API changes detected** — review above to confirm they are expected." >> $GITHUB_STEP_SUMMARY
         fi
 
     - name: Upload conformance report

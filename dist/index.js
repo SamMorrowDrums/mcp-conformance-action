@@ -35472,6 +35472,76 @@ async function checkoutPrevious() {
         // Ignore errors
     }
 }
+/**
+ * Get a display-friendly name for a ref.
+ * Returns branch/tag name if available, otherwise the short SHA.
+ */
+async function getRefDisplayName(ref) {
+    // If it's already a readable name (not a SHA), return it
+    if (!ref.match(/^[a-f0-9]{40}$/i) && !ref.match(/^[a-f0-9]{7,}$/i)) {
+        // It's likely already a branch/tag name
+        return ref;
+    }
+    // Try to find a branch name pointing to this ref
+    let output = "";
+    try {
+        await exec.exec("git", ["branch", "--points-at", ref, "--format=%(refname:short)"], {
+            silent: true,
+            listeners: {
+                stdout: (data) => {
+                    output += data.toString();
+                },
+            },
+        });
+        const branches = output.trim().split("\n").filter(Boolean);
+        if (branches.length > 0) {
+            // Prefer main/master if available
+            if (branches.includes("main"))
+                return "main";
+            if (branches.includes("master"))
+                return "master";
+            return branches[0];
+        }
+    }
+    catch {
+        // Ignore errors
+    }
+    // Try to find a tag pointing to this ref
+    output = "";
+    try {
+        await exec.exec("git", ["tag", "--points-at", ref], {
+            silent: true,
+            listeners: {
+                stdout: (data) => {
+                    output += data.toString();
+                },
+            },
+        });
+        const tags = output.trim().split("\n").filter(Boolean);
+        if (tags.length > 0) {
+            return tags[0];
+        }
+    }
+    catch {
+        // Ignore errors
+    }
+    // Fall back to short SHA
+    output = "";
+    try {
+        await exec.exec("git", ["rev-parse", "--short", ref], {
+            silent: true,
+            listeners: {
+                stdout: (data) => {
+                    output += data.toString();
+                },
+            },
+        });
+        return output.trim() || ref;
+    }
+    catch {
+        return ref.substring(0, 7);
+    }
+}
 
 // EXTERNAL MODULE: external "path"
 var external_path_ = __nccwpck_require__(6928);
@@ -53804,10 +53874,10 @@ async function runAllTests(ctx) {
         result.diffs = compareResults(branchFiles, baseFiles);
         result.hasDifferences = result.diffs.size > 0;
         if (result.hasDifferences) {
-            lib_core.warning(`⚠️ Configuration ${config.name}: ${result.diffs.size} differences found`);
+            lib_core.info(`📋 Configuration ${config.name}: ${result.diffs.size} change(s) found`);
         }
         else {
-            lib_core.info(`✅ Configuration ${config.name}: no differences`);
+            lib_core.info(`✅ Configuration ${config.name}: no changes`);
         }
         // Save individual result
         const resultPath = external_path_.join(ctx.workDir, ".conformance-results", `${config.name}.json`);
@@ -53871,14 +53941,14 @@ function generateMarkdownReport(report) {
     lines.push("");
     // Overall status
     if (report.diffCount === 0) {
-        lines.push("## ✅ All Conformance Tests Passed");
+        lines.push("## ✅ No API Changes");
         lines.push("");
-        lines.push("No API differences detected between the current branch and the comparison ref.");
+        lines.push("No differences detected between the current branch and the comparison ref.");
     }
     else {
-        lines.push("## ⚠️ API Differences Detected");
+        lines.push("## 📋 API Changes Detected");
         lines.push("");
-        lines.push(`${report.diffCount} configuration(s) have API differences that may indicate breaking changes.`);
+        lines.push(`${report.diffCount} configuration(s) have changes. Review below to ensure they are intentional.`);
     }
     lines.push("");
     // Per-configuration results
@@ -53893,17 +53963,14 @@ function generateMarkdownReport(report) {
         lines.push(`- **Base Time:** ${formatTime(result.baseTime)}`);
         lines.push("");
         if (result.hasDifferences) {
-            lines.push("#### Differences");
+            lines.push("#### Changes");
             lines.push("");
             for (const [endpoint, diff] of result.diffs) {
-                lines.push(`<details>`);
-                lines.push(`<summary><strong>${endpoint}</strong></summary>`);
+                lines.push(`**${endpoint}**`);
                 lines.push("");
                 lines.push("```diff");
                 lines.push(diff);
                 lines.push("```");
-                lines.push("");
-                lines.push("</details>");
                 lines.push("");
             }
         }
@@ -53969,14 +54036,14 @@ function saveReport(report, markdown, outputDir) {
 function generatePRSummary(report) {
     const lines = [];
     if (report.diffCount === 0) {
-        lines.push("## ✅ MCP Conformance: All Tests Passed");
+        lines.push("## ✅ MCP Conformance: No Changes");
         lines.push("");
-        lines.push(`Tested ${report.results.length} configuration(s) - no API breaking changes detected.`);
+        lines.push(`Tested ${report.results.length} configuration(s) - no API changes detected.`);
     }
     else {
-        lines.push("## ⚠️ MCP Conformance: API Differences Detected");
+        lines.push("## 📋 MCP Conformance: API Changes Detected");
         lines.push("");
-        lines.push(`**${report.diffCount}** of ${report.results.length} configuration(s) have differences.`);
+        lines.push(`**${report.diffCount}** of ${report.results.length} configuration(s) have changes.`);
         lines.push("");
         lines.push("### Changed Endpoints");
         lines.push("");
@@ -54054,6 +54121,7 @@ function getInputs() {
         // Test configuration
         compareRef: getInput("compare_ref"),
         failOnError: getBooleanInput("fail_on_error") !== false, // default true
+        failOnDiff: getBooleanInput("fail_on_diff") === true, // default false
         envVars: getInput("env_vars"),
         serverTimeout: parseInt(getInput("server_timeout") || "30000", 10),
     };
@@ -54188,10 +54256,11 @@ async function run() {
         // Determine comparison ref
         const currentBranch = await getCurrentBranch();
         const compareRef = await determineCompareRef(inputs.compareRef, process.env.GITHUB_REF);
+        const compareRefDisplay = await getRefDisplayName(compareRef);
         lib_core.info("");
         lib_core.info(`📊 Comparison:`);
         lib_core.info(`  Current: ${currentBranch}`);
-        lib_core.info(`  Compare: ${compareRef}`);
+        lib_core.info(`  Compare: ${compareRefDisplay}${compareRefDisplay !== compareRef ? ` (${compareRef.substring(0, 7)})` : ""}`);
         // Run all tests
         lib_core.info("");
         lib_core.info("🧪 Running conformance tests...");
@@ -54204,7 +54273,7 @@ async function run() {
         // Generate and save report
         lib_core.info("");
         lib_core.info("📝 Generating report...");
-        const report = generateReport(results, currentBranch, compareRef);
+        const report = generateReport(results, currentBranch, compareRefDisplay);
         const markdown = generateMarkdownReport(report);
         saveReport(report, markdown, workDir);
         // Set final status
@@ -54216,13 +54285,18 @@ async function run() {
             lib_core.setFailed(`❌ Probe errors occurred in: ${errorConfigs.join(", ")}`);
         }
         else if (report.diffCount > 0) {
-            lib_core.warning(`⚠️ ${report.diffCount} configuration(s) have API differences`);
+            if (inputs.failOnDiff) {
+                lib_core.setFailed(`❌ ${report.diffCount} configuration(s) have API changes`);
+            }
+            else {
+                lib_core.info(`📋 ${report.diffCount} configuration(s) have API changes`);
+            }
             if (hasErrors) {
                 lib_core.warning("Some configurations had probe errors (fail_on_error is disabled)");
             }
         }
         else {
-            lib_core.info("✅ All conformance tests passed!");
+            lib_core.info("✅ All conformance tests passed - no API changes detected");
         }
     }
     catch (error) {

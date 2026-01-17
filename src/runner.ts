@@ -860,9 +860,9 @@ export async function runAllTests(ctx: RunContext): Promise<TestResult[]> {
     result.hasDifferences = result.diffs.size > 0;
 
     if (result.hasDifferences) {
-      core.warning(`⚠️ Configuration ${config.name}: ${result.diffs.size} differences found`);
+      core.info(`📋 Configuration ${config.name}: ${result.diffs.size} change(s) found`);
     } else {
-      core.info(`✅ Configuration ${config.name}: no differences`);
+      core.info(`✅ Configuration ${config.name}: no changes`);
     }
 
     // Save individual result

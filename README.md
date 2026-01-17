@@ -4,15 +4,15 @@
 [![GitHub release](https://img.shields.io/github/v/release/SamMorrowDrums/mcp-conformance-action)](https://github.com/SamMorrowDrums/mcp-conformance-action/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A GitHub Action for detecting changes to [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server **public interfaces**. This action compares the current branch against a baseline to surface any changes to your server's exposed tools, resources, prompts, and capabilities—helping you catch unintended breaking changes and document intentional API evolution.
+A GitHub Action for detecting changes to [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server **public interfaces**. This action compares the current branch against a baseline to surface any changes to your server's exposed tools, resources, prompts, and capabilities—helping you document API evolution and catch unintended modifications.
 
 ## Overview
 
-MCP servers expose a **public interface** to AI assistants: tools (with their input schemas), resources, prompts, and server capabilities. As your server evolves, changes to this interface can break clients or alter expected behavior. This action automates public interface comparison by:
+MCP servers expose a **public interface** to AI assistants: tools (with their input schemas), resources, prompts, and server capabilities. As your server evolves, changes to this interface are worth tracking. This action automates public interface comparison by:
 
 1. Building your MCP server from both the current branch and a baseline (merge-base, tag, or specified ref)
 2. Querying both versions for their complete public interface (tools, resources, prompts, capabilities)
-3. Generating a detailed diff report showing exactly what changed
+3. Generating a diff report showing exactly what changed
 4. Surfacing results directly in GitHub's Job Summary
 
 This is **not** about testing internal logic or correctness—it's about visibility into what your server _advertises_ to clients.
@@ -200,6 +200,8 @@ Either `start_command` (for stdio) or `server_url` (for HTTP) must be provided, 
 | Input | Description | Default |
 |-------|-------------|---------|
 | `compare_ref` | Git ref to compare against. Auto-detects merge-base on PRs or previous tag on tag pushes if not specified. | `""` |
+| `fail_on_diff` | Fail the action if API changes are detected. Useful for release validation workflows. | `false` |
+| `fail_on_error` | Fail the action if probe errors occur (connection failures, etc.) | `true` |
 
 ### Configuration Object Schema
 
@@ -354,6 +356,21 @@ Specify any git ref to compare against:
     compare_ref: v1.0.0
 ```
 
+### Failing on Changes (Release Validation)
+
+For release workflows where you want to ensure no API changes, use `fail_on_diff`:
+
+```yaml
+- uses: SamMorrowDrums/mcp-conformance-action@v2
+  with:
+    setup_node: true
+    install_command: npm ci
+    build_command: npm run build
+    start_command: node dist/stdio.js
+    compare_ref: v1.0.0
+    fail_on_diff: true  # Action fails if any API changes are detected
+```
+
 ## Artifacts and Reports
 
 The action produces:
@@ -439,3 +456,17 @@ Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) for gu
 - [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
 - [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
 - [MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk)
+
+### Example Configurations
+
+Working examples of this action in various languages:
+
+| Language | Repository | Workflow |
+|----------|------------|----------|
+| TypeScript | [mcp-typescript-starter](https://github.com/SamMorrowDrums/mcp-typescript-starter) | [conformance.yml](https://github.com/SamMorrowDrums/mcp-typescript-starter/blob/main/.github/workflows/conformance.yml) |
+| Python | [mcp-python-starter](https://github.com/SamMorrowDrums/mcp-python-starter) | [conformance.yml](https://github.com/SamMorrowDrums/mcp-python-starter/blob/main/.github/workflows/conformance.yml) |
+| Go | [mcp-go-starter](https://github.com/SamMorrowDrums/mcp-go-starter) | [conformance.yml](https://github.com/SamMorrowDrums/mcp-go-starter/blob/main/.github/workflows/conformance.yml) |
+| Rust | [mcp-rust-starter](https://github.com/SamMorrowDrums/mcp-rust-starter) | [conformance.yml](https://github.com/SamMorrowDrums/mcp-rust-starter/blob/main/.github/workflows/conformance.yml) |
+| C# | [mcp-csharp-starter](https://github.com/SamMorrowDrums/mcp-csharp-starter) | [conformance.yml](https://github.com/SamMorrowDrums/mcp-csharp-starter/blob/main/.github/workflows/conformance.yml) |
+
+For a production example, see [github-mcp-server](https://github.com/github/github-mcp-server).

@@ -191,3 +191,72 @@ export async function checkoutPrevious(): Promise<void> {
     // Ignore errors
   }
 }
+
+/**
+ * Get a display-friendly name for a ref.
+ * Returns branch/tag name if available, otherwise the short SHA.
+ */
+export async function getRefDisplayName(ref: string): Promise<string> {
+  // If it's already a readable name (not a SHA), return it
+  if (!ref.match(/^[a-f0-9]{40}$/i) && !ref.match(/^[a-f0-9]{7,}$/i)) {
+    // It's likely already a branch/tag name
+    return ref;
+  }
+
+  // Try to find a branch name pointing to this ref
+  let output = "";
+  try {
+    await exec.exec("git", ["branch", "--points-at", ref, "--format=%(refname:short)"], {
+      silent: true,
+      listeners: {
+        stdout: (data) => {
+          output += data.toString();
+        },
+      },
+    });
+    const branches = output.trim().split("\n").filter(Boolean);
+    if (branches.length > 0) {
+      // Prefer main/master if available
+      if (branches.includes("main")) return "main";
+      if (branches.includes("master")) return "master";
+      return branches[0];
+    }
+  } catch {
+    // Ignore errors
+  }
+
+  // Try to find a tag pointing to this ref
+  output = "";
+  try {
+    await exec.exec("git", ["tag", "--points-at", ref], {
+      silent: true,
+      listeners: {
+        stdout: (data) => {
+          output += data.toString();
+        },
+      },
+    });
+    const tags = output.trim().split("\n").filter(Boolean);
+    if (tags.length > 0) {
+      return tags[0];
+    }
+  } catch {
+    // Ignore errors
+  }
+
+  // Fall back to short SHA
+  output = "";
+  try {
+    await exec.exec("git", ["rev-parse", "--short", ref], {
+      silent: true,
+      listeners: {
+        stdout: (data) => {
+          output += data.toString();
+        },
+      },
+    });
+    return output.trim() || ref;
+  } catch {
+    return ref.substring(0, 7);
+  }
+}

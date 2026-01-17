@@ -45,6 +45,7 @@ export interface ActionInputs {
     customMessages: CustomMessage[];
     compareRef: string;
     failOnError: boolean;
+    failOnDiff: boolean;
     envVars: string;
     serverTimeout: number;
     httpStartCommand: string;
