@@ -53340,8 +53340,9 @@ async function runPostTestCommand(config, workDir) {
 }
 /**
  * Probe a server with a specific configuration
+ * @param useSharedServer - If true, skip starting per-config HTTP server (shared server is already running)
  */
-async function probeWithConfig(config, workDir, globalEnvVars, globalHeaders, globalCustomMessages) {
+async function probeWithConfig(config, workDir, globalEnvVars, globalHeaders, globalCustomMessages, useSharedServer = false) {
     const configEnvVars = parseEnvVars(config.env_vars);
     const envVars = { ...globalEnvVars, ...configEnvVars };
     const headers = { ...globalHeaders, ...config.headers };
@@ -53368,9 +53369,10 @@ async function probeWithConfig(config, workDir, globalEnvVars, globalHeaders, gl
     }
     else {
         // For HTTP transport, optionally start the server if start_command is provided
+        // Skip if using shared server
         let serverProcess = null;
         try {
-            if (config.start_command) {
+            if (config.start_command && !useSharedServer) {
                 serverProcess = await startHttpServer(config, workDir, envVars);
             }
             return await probeServer({
@@ -53440,8 +53442,9 @@ function generateSimpleDiff(name, base, branch) {
 }
 /**
  * Run conformance tests for a single configuration
+ * @param useSharedServer - If true, skip per-config HTTP server management (shared server is running)
  */
-async function runSingleConfigTest(config, ctx) {
+async function runSingleConfigTest(config, ctx, useSharedServer = false) {
     const result = {
         configName: config.name,
         transport: config.transport,
@@ -53459,7 +53462,7 @@ async function runSingleConfigTest(config, ctx) {
     const branchStart = Date.now();
     let branchResult;
     try {
-        branchResult = await probeWithConfig(config, ctx.workDir, globalEnvVars, globalHeaders, globalCustomMessages);
+        branchResult = await probeWithConfig(config, ctx.workDir, globalEnvVars, globalHeaders, globalCustomMessages, useSharedServer);
     }
     finally {
         // Always run post-test cleanup
@@ -53493,7 +53496,7 @@ async function runSingleConfigTest(config, ctx) {
         const baseStart = Date.now();
         let baseResult;
         try {
-            baseResult = await probeWithConfig(config, baseWorkDir, globalEnvVars, globalHeaders, globalCustomMessages);
+            baseResult = await probeWithConfig(config, baseWorkDir, globalEnvVars, globalHeaders, globalCustomMessages, useSharedServer);
         }
         finally {
             // Always run post-test cleanup
@@ -53529,32 +53532,91 @@ async function runSingleConfigTest(config, ctx) {
     return result;
 }
 /**
+ * Start a shared HTTP server for all HTTP transport configurations
+ */
+async function startSharedHttpServer(command, workDir, waitMs, envVars) {
+    lib_core.info(`🚀 Starting shared HTTP server: ${command}`);
+    // Merge environment variables
+    const env = {};
+    for (const [key, value] of Object.entries(process.env)) {
+        if (value !== undefined) {
+            env[key] = value;
+        }
+    }
+    for (const [key, value] of Object.entries(envVars)) {
+        env[key] = value;
+    }
+    const serverProcess = (0,external_child_process_.spawn)("sh", ["-c", command], {
+        cwd: workDir,
+        env,
+        detached: true,
+        stdio: ["ignore", "pipe", "pipe"],
+    });
+    // Log server output for debugging
+    serverProcess.stdout?.on("data", (data) => {
+        lib_core.debug(`  [shared server stdout]: ${data.toString().trim()}`);
+    });
+    serverProcess.stderr?.on("data", (data) => {
+        lib_core.debug(`  [shared server stderr]: ${data.toString().trim()}`);
+    });
+    lib_core.info(`  Waiting ${waitMs}ms for shared HTTP server to start...`);
+    await sleep(waitMs);
+    // Check if process is still running
+    if (serverProcess.exitCode !== null) {
+        throw new Error(`Shared HTTP server exited prematurely with code ${serverProcess.exitCode}`);
+    }
+    lib_core.info("  ✅ Shared HTTP server started");
+    return serverProcess;
+}
+/**
  * Run all conformance tests
  */
 async function runAllTests(ctx) {
     const results = [];
-    for (const config of ctx.inputs.configurations) {
-        try {
-            const result = await runSingleConfigTest(config, ctx);
-            results.push(result);
-            // Save individual result
-            const resultPath = external_path_.join(ctx.workDir, ".conformance-results", `${config.name}.json`);
-            external_fs_.mkdirSync(external_path_.dirname(resultPath), { recursive: true });
-            external_fs_.writeFileSync(resultPath, JSON.stringify({
-                ...result,
-                diffs: Object.fromEntries(result.diffs),
-            }, null, 2));
+    const globalEnvVars = parseEnvVars(ctx.inputs.envVars);
+    // Check if we have a shared HTTP server to manage
+    const httpStartCommand = ctx.inputs.httpStartCommand;
+    const httpStartupWaitMs = ctx.inputs.httpStartupWaitMs || 2000;
+    const hasHttpConfigs = ctx.inputs.configurations.some((c) => c.transport === "streamable-http");
+    const useSharedServer = !!httpStartCommand && hasHttpConfigs;
+    let sharedServerProcess = null;
+    try {
+        // Start shared HTTP server if configured
+        if (useSharedServer) {
+            sharedServerProcess = await startSharedHttpServer(httpStartCommand, ctx.workDir, httpStartupWaitMs, globalEnvVars);
         }
-        catch (error) {
-            lib_core.error(`Failed to run configuration ${config.name}: ${error}`);
-            results.push({
-                configName: config.name,
-                transport: config.transport,
-                branchTime: 0,
-                baseTime: 0,
-                hasDifferences: true,
-                diffs: new Map([["error", String(error)]]),
-            });
+        for (const config of ctx.inputs.configurations) {
+            try {
+                // Use shared server for HTTP configs when available
+                const configUsesSharedServer = useSharedServer && config.transport === "streamable-http";
+                const result = await runSingleConfigTest(config, ctx, configUsesSharedServer);
+                results.push(result);
+                // Save individual result
+                const resultPath = external_path_.join(ctx.workDir, ".conformance-results", `${config.name}.json`);
+                external_fs_.mkdirSync(external_path_.dirname(resultPath), { recursive: true });
+                external_fs_.writeFileSync(resultPath, JSON.stringify({
+                    ...result,
+                    diffs: Object.fromEntries(result.diffs),
+                }, null, 2));
+            }
+            catch (error) {
+                lib_core.error(`Failed to run configuration ${config.name}: ${error}`);
+                results.push({
+                    configName: config.name,
+                    transport: config.transport,
+                    branchTime: 0,
+                    baseTime: 0,
+                    hasDifferences: true,
+                    diffs: new Map([["error", String(error)]]),
+                });
+            }
+        }
+    }
+    finally {
+        // Stop shared HTTP server if we started one
+        if (sharedServerProcess) {
+            lib_core.info("🛑 Stopping shared HTTP server...");
+            stopHttpServer(sharedServerProcess);
         }
     }
     return results;
@@ -53787,6 +53849,9 @@ function getInputs() {
         headers,
         configurations,
         customMessages,
+        // Shared HTTP server configuration
+        httpStartCommand: getInput("http_start_command"),
+        httpStartupWaitMs: parseInt(getInput("http_startup_wait_ms") || "2000", 10),
         // Test configuration
         compareRef: getInput("compare_ref"),
         failOnError: getBooleanInput("fail_on_error") !== false, // default true

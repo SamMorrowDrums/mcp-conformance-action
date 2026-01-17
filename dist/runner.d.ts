@@ -25,8 +25,9 @@ export declare function parseHeaders(input: string | undefined): Record<string, 
 export declare function parseEnvVars(input?: string): Record<string, string>;
 /**
  * Run conformance tests for a single configuration
+ * @param useSharedServer - If true, skip per-config HTTP server management (shared server is running)
  */
-export declare function runSingleConfigTest(config: TestConfiguration, ctx: RunContext): Promise<TestResult>;
+export declare function runSingleConfigTest(config: TestConfiguration, ctx: RunContext, useSharedServer?: boolean): Promise<TestResult>;
 /**
  * Run all conformance tests
  */

@@ -47,6 +47,8 @@ export interface ActionInputs {
     failOnError: boolean;
     envVars: string;
     serverTimeout: number;
+    httpStartCommand: string;
+    httpStartupWaitMs: number;
 }
 export interface ProbeResult {
     initialize: InitializeInfo | null;

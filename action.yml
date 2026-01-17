@@ -113,6 +113,20 @@ inputs:
     required: false
     default: '10'
 
+  # Shared HTTP server (starts once, tests all HTTP configurations against it)
+  http_start_command:
+    description: |
+      Command to start a shared HTTP server for all HTTP transport configurations.
+      When set, the server starts once before all HTTP tests and stops after they complete.
+      This is more efficient than starting/stopping per-configuration.
+      Per-config start_command is ignored when this is set.
+    required: false
+    default: ''
+  http_startup_wait_ms:
+    description: 'Milliseconds to wait for shared HTTP server to start (default: 2000)'
+    required: false
+    default: '2000'
+
 outputs:
   status:
     description: 'Test status (passed, differences, or error)'
@@ -178,6 +192,8 @@ runs:
         INPUT_CUSTOM_MESSAGES: ${{ inputs.custom_messages }}
         INPUT_HEADERS: ${{ inputs.headers }}
         INPUT_ENV_VARS: ${{ inputs.env_vars }}
+        INPUT_HTTP_START_COMMAND: ${{ inputs.http_start_command }}
+        INPUT_HTTP_STARTUP_WAIT_MS: ${{ inputs.http_startup_wait_ms }}
         INPUT_SETUP_NODE: ${{ inputs.setup_node }}
         INPUT_NODE_VERSION: ${{ inputs.node_version }}
         INPUT_SETUP_PYTHON: ${{ inputs.setup_python }}

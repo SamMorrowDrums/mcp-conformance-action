@@ -57,6 +57,10 @@ export interface ActionInputs {
   failOnError: boolean;
   envVars: string;
   serverTimeout: number;
+
+  // Shared HTTP server configuration
+  httpStartCommand: string;
+  httpStartupWaitMs: number;
 }
 
 export interface ProbeResult {

@@ -73,6 +73,10 @@ function getInputs(): ActionInputs {
     configurations,
     customMessages,
 
+    // Shared HTTP server configuration
+    httpStartCommand: getInput("http_start_command"),
+    httpStartupWaitMs: parseInt(getInput("http_startup_wait_ms") || "2000", 10),
+
     // Test configuration
     compareRef: getInput("compare_ref"),
     failOnError: getBooleanInput("fail_on_error") !== false, // default true
