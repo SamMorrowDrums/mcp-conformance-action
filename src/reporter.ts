@@ -176,9 +176,7 @@ export function generatePRSummary(report: ConformanceReport): string {
   if (report.diffCount === 0) {
     lines.push("## ✅ MCP Conformance: No Changes");
     lines.push("");
-    lines.push(
-      `Tested ${report.results.length} configuration(s) - no API changes detected.`
-    );
+    lines.push(`Tested ${report.results.length} configuration(s) - no API changes detected.`);
   } else {
     lines.push("## 📋 MCP Conformance: API Changes Detected");
     lines.push("");

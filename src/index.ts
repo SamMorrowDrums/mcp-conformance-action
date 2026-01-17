@@ -231,7 +231,9 @@ async function run(): Promise<void> {
     core.info("");
     core.info(`📊 Comparison:`);
     core.info(`  Current: ${currentBranch}`);
-    core.info(`  Compare: ${compareRefDisplay}${compareRefDisplay !== compareRef ? ` (${compareRef.substring(0, 7)})` : ""}`);
+    core.info(
+      `  Compare: ${compareRefDisplay}${compareRefDisplay !== compareRef ? ` (${compareRef.substring(0, 7)})` : ""}`
+    );
 
     // Run all tests
     core.info("");
