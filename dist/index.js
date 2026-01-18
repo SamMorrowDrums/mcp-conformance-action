@@ -57269,6 +57269,17 @@ function formatValue(value) {
     return String(value);
 }
 /**
+ * Extract primitive counts from a probe result
+ */
+function extractCounts(result) {
+    return {
+        tools: result.tools?.tools?.length || 0,
+        prompts: result.prompts?.prompts?.length || 0,
+        resources: result.resources?.resources?.length || 0,
+        resourceTemplates: result.resourceTemplates?.resourceTemplates?.length || 0,
+    };
+}
+/**
  * Generate a simple line-by-line diff (fallback for non-JSON)
  */
 function generateSimpleTextDiff(name, base, branch) {
@@ -57477,6 +57488,8 @@ async function runAllTests(ctx) {
             baseTime: baseData?.time || 0,
             hasDifferences: false,
             diffs: new Map(),
+            branchCounts: branchData?.result ? extractCounts(branchData.result) : undefined,
+            baseCounts: baseData?.result ? extractCounts(baseData.result) : undefined,
         };
         // Handle errors
         if (branchData?.result.error) {
@@ -57578,10 +57591,26 @@ function generateMarkdownReport(report) {
     lines.push("## Configuration Results");
     lines.push("");
     for (const result of report.results) {
-        const statusIcon = result.hasDifferences ? "⚠️" : "✅";
+        const statusIcon = result.error ? "❌" : result.hasDifferences ? "⚠️" : "✅";
         lines.push(`### ${statusIcon} ${result.configName}`);
         lines.push("");
         lines.push(`- **Transport:** ${result.transport}`);
+        // Show primitive counts if available
+        if (result.branchCounts) {
+            const counts = result.branchCounts;
+            const countParts = [];
+            if (counts.tools > 0)
+                countParts.push(`${counts.tools} tools`);
+            if (counts.prompts > 0)
+                countParts.push(`${counts.prompts} prompts`);
+            if (counts.resources > 0)
+                countParts.push(`${counts.resources} resources`);
+            if (counts.resourceTemplates > 0)
+                countParts.push(`${counts.resourceTemplates} resource templates`);
+            if (countParts.length > 0) {
+                lines.push(`- **Primitives:** ${countParts.join(", ")}`);
+            }
+        }
         lines.push(`- **Branch Time:** ${formatTime(result.branchTime)}`);
         lines.push(`- **Base Time:** ${formatTime(result.baseTime)}`);
         lines.push("");

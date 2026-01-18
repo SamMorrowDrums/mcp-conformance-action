@@ -15,6 +15,7 @@ import type {
   TestResult,
   ProbeResult,
   CustomMessage,
+  PrimitiveCounts,
 } from "./types.js";
 
 interface RunContext {
@@ -561,6 +562,18 @@ function formatValue(value: unknown): string {
 }
 
 /**
+ * Extract primitive counts from a probe result
+ */
+function extractCounts(result: ProbeResult): PrimitiveCounts {
+  return {
+    tools: result.tools?.tools?.length || 0,
+    prompts: result.prompts?.prompts?.length || 0,
+    resources: result.resources?.resources?.length || 0,
+    resourceTemplates: result.resourceTemplates?.resourceTemplates?.length || 0,
+  };
+}
+
+/**
  * Generate a simple line-by-line diff (fallback for non-JSON)
  */
 function generateSimpleTextDiff(name: string, base: string, branch: string): string | null {
@@ -835,6 +848,8 @@ export async function runAllTests(ctx: RunContext): Promise<TestResult[]> {
       baseTime: baseData?.time || 0,
       hasDifferences: false,
       diffs: new Map(),
+      branchCounts: branchData?.result ? extractCounts(branchData.result) : undefined,
+      baseCounts: baseData?.result ? extractCounts(baseData.result) : undefined,
     };
 
     // Handle errors

@@ -76,10 +76,24 @@ export function generateMarkdownReport(report: ConformanceReport): string {
   lines.push("");
 
   for (const result of report.results) {
-    const statusIcon = result.hasDifferences ? "⚠️" : "✅";
+    const statusIcon = result.error ? "❌" : result.hasDifferences ? "⚠️" : "✅";
     lines.push(`### ${statusIcon} ${result.configName}`);
     lines.push("");
     lines.push(`- **Transport:** ${result.transport}`);
+    
+    // Show primitive counts if available
+    if (result.branchCounts) {
+      const counts = result.branchCounts;
+      const countParts: string[] = [];
+      if (counts.tools > 0) countParts.push(`${counts.tools} tools`);
+      if (counts.prompts > 0) countParts.push(`${counts.prompts} prompts`);
+      if (counts.resources > 0) countParts.push(`${counts.resources} resources`);
+      if (counts.resourceTemplates > 0) countParts.push(`${counts.resourceTemplates} resource templates`);
+      if (countParts.length > 0) {
+        lines.push(`- **Primitives:** ${countParts.join(", ")}`);
+      }
+    }
+    
     lines.push(`- **Branch Time:** ${formatTime(result.branchTime)}`);
     lines.push(`- **Base Time:** ${formatTime(result.baseTime)}`);
     lines.push("");

@@ -101,6 +101,13 @@ export interface ResourceTemplatesResult {
         mimeType?: string;
     }>;
 }
+/** Counts of MCP primitives discovered */
+export interface PrimitiveCounts {
+    tools: number;
+    prompts: number;
+    resources: number;
+    resourceTemplates: number;
+}
 export interface TestResult {
     configName: string;
     transport: string;
@@ -108,6 +115,12 @@ export interface TestResult {
     baseTime: number;
     hasDifferences: boolean;
     diffs: Map<string, string>;
+    /** Primitive counts from current branch */
+    branchCounts?: PrimitiveCounts;
+    /** Primitive counts from base ref */
+    baseCounts?: PrimitiveCounts;
+    /** Error message if probing failed */
+    error?: string;
 }
 export interface ConformanceReport {
     generatedAt: string;
