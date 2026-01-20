@@ -56606,6 +56606,13 @@ const log = {
 
 
 /**
+ * Check if an error is "Method not found" (-32601)
+ */
+function isMethodNotFound(error) {
+    const errorStr = String(error);
+    return errorStr.includes("-32601") || errorStr.includes("Method not found");
+}
+/**
  * Probes an MCP server and returns capability snapshots
  */
 async function probeServer(options) {
@@ -56677,7 +56684,12 @@ async function probeServer(options) {
                 log.info(`  Listed ${result.tools.tools.length} tools`);
             }
             catch (error) {
-                log.warning(`  Failed to list tools: ${error}`);
+                if (isMethodNotFound(error)) {
+                    log.info("  Server does not implement tools/list");
+                }
+                else {
+                    log.warning(`  Failed to list tools: ${error}`);
+                }
             }
         }
         else {
@@ -56691,7 +56703,12 @@ async function probeServer(options) {
                 log.info(`  Listed ${result.prompts.prompts.length} prompts`);
             }
             catch (error) {
-                log.warning(`  Failed to list prompts: ${error}`);
+                if (isMethodNotFound(error)) {
+                    log.info("  Server does not implement prompts/list");
+                }
+                else {
+                    log.warning(`  Failed to list prompts: ${error}`);
+                }
             }
         }
         else {
@@ -56705,16 +56722,26 @@ async function probeServer(options) {
                 log.info(`  Listed ${result.resources.resources.length} resources`);
             }
             catch (error) {
-                log.warning(`  Failed to list resources: ${error}`);
+                if (isMethodNotFound(error)) {
+                    log.info("  Server does not implement resources/list");
+                }
+                else {
+                    log.warning(`  Failed to list resources: ${error}`);
+                }
             }
-            // Also get resource templates
+            // Also try resource templates - some servers support resources but not templates
             try {
                 const templatesResult = await client.listResourceTemplates();
                 result.resourceTemplates = templatesResult;
                 log.info(`  Listed ${result.resourceTemplates.resourceTemplates.length} resource templates`);
             }
             catch (error) {
-                log.warning(`  Failed to list resource templates: ${error}`);
+                if (isMethodNotFound(error)) {
+                    log.info("  Server does not implement resources/templates/list");
+                }
+                else {
+                    log.warning(`  Failed to list resource templates: ${error}`);
+                }
             }
         }
         else {
