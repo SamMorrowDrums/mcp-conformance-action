@@ -44,6 +44,7 @@ function parseCliArgs() {
     options: {
       base: { type: "string", short: "b" },
       target: { type: "string", short: "t" },
+      header: { type: "string", short: "H", multiple: true },
       config: { type: "string", short: "c" },
       output: { type: "string", short: "o", default: "summary" },
       verbose: { type: "boolean", short: "v", default: false },
@@ -73,6 +74,7 @@ USAGE:
 OPTIONS:
   -b, --base <command>     Base server command (stdio) or URL (http)
   -t, --target <command>   Target server command (stdio) or URL (http)
+  -H, --header <header>    HTTP header (can be repeated, e.g. -H "Authorization: Bearer ...")
   -c, --config <file>      Config file with base and targets
   -o, --output <format>    Output format: diff, json, markdown, summary (default: summary)
   -v, --verbose            Verbose output
@@ -114,6 +116,10 @@ EXAMPLES:
 
   # Output raw JSON for CI
   mcp-server-diff -c servers.json -o json -q
+
+  # Compare with HTTP headers (for authenticated endpoints)
+  mcp-server-diff -b "go run ./cmd/server stdio" -t "https://api.example.com/mcp" \\
+    -H "Authorization: Bearer token" -o diff
 `);
 }
 
@@ -137,12 +143,17 @@ function loadConfig(configPath: string): DiffConfig {
 /**
  * Create a server config from a command string
  */
-function commandToConfig(command: string, name: string): ServerConfig {
+function commandToConfig(
+  command: string,
+  name: string,
+  headers?: Record<string, string>
+): ServerConfig {
   if (command.startsWith("http://") || command.startsWith("https://")) {
     return {
       name,
       transport: "streamable-http",
       server_url: command,
+      headers,
     };
   }
 
@@ -151,6 +162,28 @@ function commandToConfig(command: string, name: string): ServerConfig {
     transport: "stdio",
     start_command: command,
   };
+}
+
+/**
+ * Parse header strings into a record
+ * Accepts formats: "Header: value" or "Header=value"
+ */
+function parseHeaders(headerStrings?: string[]): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (!headerStrings) return headers;
+
+  for (const h of headerStrings) {
+    const colonIdx = h.indexOf(":");
+    const eqIdx = h.indexOf("=");
+    const sepIdx = colonIdx > 0 ? colonIdx : eqIdx;
+
+    if (sepIdx > 0) {
+      const key = h.substring(0, sepIdx).trim();
+      const value = h.substring(sepIdx + 1).trim();
+      headers[key] = value;
+    }
+  }
+  return headers;
 }
 
 /**
@@ -404,9 +437,10 @@ async function main(): Promise<void> {
   if (values.config) {
     config = loadConfig(values.config);
   } else if (values.base && values.target) {
+    const headers = parseHeaders(values.header as string[] | undefined);
     config = {
       base: commandToConfig(values.base, "base"),
-      targets: [commandToConfig(values.target, "target")],
+      targets: [commandToConfig(values.target, "target", headers)],
     };
   } else {
     console.error("Error: Must provide --config or both --base and --target");
