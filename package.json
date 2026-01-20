@@ -1,6 +1,6 @@
 {
   "name": "mcp-server-diff",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "Diff MCP server public interfaces - CLI tool and GitHub Action",
   "main": "dist/index.js",
   "bin": {
