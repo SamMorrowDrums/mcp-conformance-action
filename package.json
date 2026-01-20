@@ -1,11 +1,16 @@
 {
   "name": "mcp-server-diff",
-  "version": "2.0.0",
-  "description": "GitHub Action for diffing MCP server public interfaces between versions",
+  "version": "2.1.0",
+  "description": "Diff MCP server public interfaces - CLI tool and GitHub Action",
   "main": "dist/index.js",
+  "bin": {
+    "mcp-server-diff": "dist/cli/index.js"
+  },
   "type": "module",
   "scripts": {
-    "build": "ncc build src/index.ts -o dist --license licenses.txt --no-source-map-register",
+    "build": "npm run build:action && npm run build:cli",
+    "build:action": "ncc build src/index.ts -o dist --license licenses.txt --no-source-map-register",
+    "build:cli": "ncc build src/cli.ts -o dist/cli --license licenses.txt --no-source-map-register && node -e \"const fs=require('fs'); const p='dist/cli/index.js'; fs.writeFileSync(p, '#!/usr/bin/env node\\n' + fs.readFileSync(p))\"",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write src/",
@@ -21,6 +26,7 @@
     "url": "git+https://github.com/SamMorrowDrums/mcp-server-diff.git"
   },
   "keywords": [
+    "cli",
     "github-action",
     "mcp",
     "model-context-protocol",

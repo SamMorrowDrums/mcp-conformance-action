@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { createRequire as __WEBPACK_EXTERNAL_createRequire } from "module";
 /******/ var __webpack_modules__ = ({
 
@@ -38913,265 +38914,10 @@ module.exports = /*#__PURE__*/JSON.parse('{"$schema":"http://json-schema.org/dra
 /************************************************************************/
 var __webpack_exports__ = {};
 
-// EXTERNAL MODULE: ./node_modules/@actions/core/lib/core.js
-var lib_core = __nccwpck_require__(7484);
-// EXTERNAL MODULE: ./node_modules/@actions/exec/lib/exec.js
-var exec = __nccwpck_require__(5236);
-;// CONCATENATED MODULE: ./src/git.ts
-/**
- * Git utilities for MCP server diff
- */
-
-
-/**
- * Get current branch name
- */
-async function getCurrentBranch() {
-    let output = "";
-    try {
-        await exec.exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-            silent: true,
-            listeners: {
-                stdout: (data) => {
-                    output += data.toString();
-                },
-            },
-        });
-        return output.trim() || "HEAD";
-    }
-    catch {
-        return "HEAD";
-    }
-}
-/**
- * Determine what ref to compare against
- * Priority: 1) Explicit compare_ref, 2) Auto-detect previous tag, 3) Merge-base with main
- */
-async function determineCompareRef(explicitRef, githubRef) {
-    // If explicit ref provided, use it
-    if (explicitRef) {
-        lib_core.info(`Using explicit compare ref: ${explicitRef}`);
-        return explicitRef;
-    }
-    // Check if this is a tag push
-    if (githubRef?.startsWith("refs/tags/")) {
-        const currentTag = githubRef.replace("refs/tags/", "");
-        lib_core.info(`Detected tag push: ${currentTag}`);
-        // Try to find previous tag
-        const previousTag = await findPreviousTag(currentTag);
-        if (previousTag && previousTag !== currentTag) {
-            lib_core.info(`Auto-detected previous tag: ${previousTag}`);
-            return previousTag;
-        }
-        // Fall back to first commit
-        const firstCommit = await getFirstCommit();
-        lib_core.warning("No previous tag found, comparing against initial commit");
-        return firstCommit;
-    }
-    // Default: find merge-base with main
-    const baseRef = await findMainBranch();
-    const mergeBase = await getMergeBase(baseRef);
-    lib_core.info(`Using merge-base with ${baseRef}: ${mergeBase}`);
-    return mergeBase;
-}
-/**
- * Find the previous tag (sorted by version)
- */
-async function findPreviousTag(currentTag) {
-    let output = "";
-    try {
-        await exec.exec("git", ["tag", "--sort=-v:refname"], {
-            silent: true,
-            listeners: {
-                stdout: (data) => {
-                    output += data.toString();
-                },
-            },
-        });
-        const tags = output.trim().split("\n");
-        const currentIndex = tags.indexOf(currentTag);
-        if (currentIndex >= 0 && currentIndex < tags.length - 1) {
-            return tags[currentIndex + 1];
-        }
-        return null;
-    }
-    catch {
-        return null;
-    }
-}
-/**
- * Get the first commit in the repository
- */
-async function getFirstCommit() {
-    let output = "";
-    await exec.exec("git", ["rev-list", "--max-parents=0", "HEAD"], {
-        silent: true,
-        listeners: {
-            stdout: (data) => {
-                output += data.toString();
-            },
-        },
-    });
-    return output.trim().split("\n")[0];
-}
-/**
- * Find the main branch (origin/main, main, or first commit)
- */
-async function findMainBranch() {
-    // Try origin/main
-    try {
-        await exec.exec("git", ["rev-parse", "--verify", "origin/main"], { silent: true });
-        return "origin/main";
-    }
-    catch {
-        // Try main
-        try {
-            await exec.exec("git", ["rev-parse", "--verify", "main"], { silent: true });
-            return "main";
-        }
-        catch {
-            // Fall back to first commit
-            return await getFirstCommit();
-        }
-    }
-}
-/**
- * Get merge-base between HEAD and a ref
- */
-async function getMergeBase(ref) {
-    let output = "";
-    try {
-        await exec.exec("git", ["merge-base", "HEAD", ref], {
-            silent: true,
-            listeners: {
-                stdout: (data) => {
-                    output += data.toString();
-                },
-            },
-        });
-        return output.trim();
-    }
-    catch {
-        return ref;
-    }
-}
-/**
- * Create a worktree for the compare ref
- */
-async function createWorktree(ref, path) {
-    try {
-        await exec.exec("git", ["worktree", "add", "--quiet", path, ref], { silent: true });
-        return true;
-    }
-    catch {
-        return false;
-    }
-}
-/**
- * Remove a worktree
- */
-async function removeWorktree(path) {
-    try {
-        await exec.exec("git", ["worktree", "remove", "--force", path], { silent: true });
-    }
-    catch {
-        // Ignore errors
-    }
-}
-/**
- * Checkout a ref (fallback if worktree fails)
- */
-async function checkout(ref) {
-    await exec.exec("git", ["checkout", "--quiet", ref], { silent: true });
-}
-/**
- * Checkout previous branch/ref
- */
-async function checkoutPrevious() {
-    try {
-        await exec.exec("git", ["checkout", "--quiet", "-"], { silent: true });
-    }
-    catch {
-        // Ignore errors
-    }
-}
-/**
- * Get a display-friendly name for a ref.
- * Returns branch/tag name if available, otherwise the short SHA.
- */
-async function getRefDisplayName(ref) {
-    // If it's already a readable name (not a SHA), return it
-    if (!ref.match(/^[a-f0-9]{40}$/i) && !ref.match(/^[a-f0-9]{7,}$/i)) {
-        // It's likely already a branch/tag name
-        return ref;
-    }
-    // Try to find a branch name pointing to this ref
-    let output = "";
-    try {
-        await exec.exec("git", ["branch", "--points-at", ref, "--format=%(refname:short)"], {
-            silent: true,
-            listeners: {
-                stdout: (data) => {
-                    output += data.toString();
-                },
-            },
-        });
-        const branches = output.trim().split("\n").filter(Boolean);
-        if (branches.length > 0) {
-            // Prefer main/master if available
-            if (branches.includes("main"))
-                return "main";
-            if (branches.includes("master"))
-                return "master";
-            return branches[0];
-        }
-    }
-    catch {
-        // Ignore errors
-    }
-    // Try to find a tag pointing to this ref
-    output = "";
-    try {
-        await exec.exec("git", ["tag", "--points-at", ref], {
-            silent: true,
-            listeners: {
-                stdout: (data) => {
-                    output += data.toString();
-                },
-            },
-        });
-        const tags = output.trim().split("\n").filter(Boolean);
-        if (tags.length > 0) {
-            return tags[0];
-        }
-    }
-    catch {
-        // Ignore errors
-    }
-    // Fall back to short SHA
-    output = "";
-    try {
-        await exec.exec("git", ["rev-parse", "--short", ref], {
-            silent: true,
-            listeners: {
-                stdout: (data) => {
-                    output += data.toString();
-                },
-            },
-        });
-        return output.trim() || ref;
-    }
-    catch {
-        return ref.substring(0, 7);
-    }
-}
-
-// EXTERNAL MODULE: external "path"
-var external_path_ = __nccwpck_require__(6928);
+// EXTERNAL MODULE: external "node:util"
+var external_node_util_ = __nccwpck_require__(7975);
 // EXTERNAL MODULE: external "fs"
 var external_fs_ = __nccwpck_require__(9896);
-// EXTERNAL MODULE: external "child_process"
-var external_child_process_ = __nccwpck_require__(5317);
 ;// CONCATENATED MODULE: ./node_modules/zod/v4/core/core.js
 /** A special constant with type `never` */
 const NEVER = Object.freeze({
@@ -56522,6 +56268,8 @@ const coerce = {
 
 const types_NEVER = (/* unused pure expression or super */ null && (INVALID));
 
+// EXTERNAL MODULE: ./node_modules/@actions/core/lib/core.js
+var lib_core = __nccwpck_require__(7484);
 ;// CONCATENATED MODULE: ./src/logger.ts
 /**
  * Logger abstraction - works in both CLI and GitHub Actions contexts
@@ -56864,482 +56612,13 @@ function probeResultToFiles(result) {
     return files;
 }
 
-;// CONCATENATED MODULE: ./src/runner.ts
+;// CONCATENATED MODULE: ./src/diff.ts
 /**
- * Test runner for MCP server diff
+ * Core diffing logic for MCP servers
+ *
+ * Pure functions for comparing probe results - no I/O side effects.
  */
 
-
-
-
-
-
-
-/**
- * Parse configurations from input
- */
-function parseConfigurations(input, defaultTransport, defaultCommand, defaultUrl) {
-    if (!input || input.trim() === "[]" || input.trim() === "") {
-        // Return single default configuration
-        return [
-            {
-                name: "default",
-                transport: defaultTransport,
-                start_command: defaultTransport === "stdio" ? defaultCommand : undefined,
-                server_url: defaultTransport === "streamable-http" ? defaultUrl : undefined,
-            },
-        ];
-    }
-    try {
-        const configs = JSON.parse(input);
-        if (!Array.isArray(configs) || configs.length === 0) {
-            throw new Error("Configurations must be a non-empty array");
-        }
-        // Apply defaults to each configuration
-        return configs.map((config) => {
-            const transport = config.transport || defaultTransport;
-            return {
-                ...config,
-                transport,
-                // For stdio, use default command if not specified (appending args if needed)
-                start_command: transport === "stdio" ? config.start_command || defaultCommand : config.start_command,
-                // For HTTP, use default URL if not specified
-                server_url: transport === "streamable-http" ? config.server_url || defaultUrl : config.server_url,
-            };
-        });
-    }
-    catch (error) {
-        lib_core.warning(`Failed to parse configurations: ${error}`);
-        // Return default
-        return [
-            {
-                name: "default",
-                transport: defaultTransport,
-                start_command: defaultTransport === "stdio" ? defaultCommand : undefined,
-                server_url: defaultTransport === "streamable-http" ? defaultUrl : undefined,
-            },
-        ];
-    }
-}
-/**
- * Parse custom messages from input
- */
-function parseCustomMessages(input) {
-    if (!input || input.trim() === "[]" || input.trim() === "") {
-        return [];
-    }
-    try {
-        const messages = JSON.parse(input);
-        return Array.isArray(messages) ? messages : [];
-    }
-    catch {
-        return [];
-    }
-}
-/**
- * Parse headers from input (JSON object or KEY=value format, newline separated)
- */
-function parseHeaders(input) {
-    if (!input || input.trim() === "" || input.trim() === "{}") {
-        return {};
-    }
-    // Try JSON first
-    try {
-        const parsed = JSON.parse(input);
-        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-            return parsed;
-        }
-    }
-    catch {
-        // Not JSON, try KEY=value format
-    }
-    // Fall back to KEY=value format
-    const headers = {};
-    const lines = input.split("\n");
-    for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith("#"))
-            continue;
-        const colonIndex = trimmed.indexOf(":");
-        const eqIndex = trimmed.indexOf("=");
-        // Support both "Header: value" and "Header=value" formats
-        const sepIndex = colonIndex > 0 ? colonIndex : eqIndex;
-        if (sepIndex > 0) {
-            const key = trimmed.substring(0, sepIndex).trim();
-            const value = trimmed.substring(sepIndex + 1).trim();
-            headers[key] = value;
-        }
-    }
-    return headers;
-}
-/**
- * Parse environment variables from string (KEY=value format, newline separated)
- */
-function parseEnvVars(input) {
-    const env = {};
-    if (!input)
-        return env;
-    const lines = input.split("\n");
-    for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith("#"))
-            continue;
-        const eqIndex = trimmed.indexOf("=");
-        if (eqIndex > 0) {
-            const key = trimmed.substring(0, eqIndex);
-            const value = trimmed.substring(eqIndex + 1);
-            env[key] = value;
-        }
-    }
-    return env;
-}
-/**
- * Run build commands in a directory
- */
-async function runBuild(dir, inputs) {
-    const options = { cwd: dir };
-    if (inputs.installCommand) {
-        lib_core.info(`  Running install: ${inputs.installCommand}`);
-        await exec.exec("sh", ["-c", inputs.installCommand], options);
-    }
-    if (inputs.buildCommand) {
-        lib_core.info(`  Running build: ${inputs.buildCommand}`);
-        await exec.exec("sh", ["-c", inputs.buildCommand], options);
-    }
-}
-/**
- * Sleep for a specified number of milliseconds
- */
-function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
-/**
- * Start an HTTP server process for the given configuration.
- * Returns the spawned process which should be killed after probing.
- */
-async function startHttpServer(config, workDir, envVars) {
-    if (!config.start_command) {
-        return null;
-    }
-    lib_core.info(`  Starting HTTP server: ${config.start_command}`);
-    // Merge environment variables
-    const env = {};
-    for (const [key, value] of Object.entries(process.env)) {
-        if (value !== undefined) {
-            env[key] = value;
-        }
-    }
-    for (const [key, value] of Object.entries(envVars)) {
-        env[key] = value;
-    }
-    const serverProcess = (0,external_child_process_.spawn)("sh", ["-c", config.start_command], {
-        cwd: workDir,
-        env,
-        detached: true,
-        stdio: ["ignore", "pipe", "pipe"],
-    });
-    // Log server output for debugging
-    serverProcess.stdout?.on("data", (data) => {
-        lib_core.debug(`  [server stdout]: ${data.toString().trim()}`);
-    });
-    serverProcess.stderr?.on("data", (data) => {
-        lib_core.debug(`  [server stderr]: ${data.toString().trim()}`);
-    });
-    // Wait for server to start up
-    const waitMs = config.startup_wait_ms ?? config.pre_test_wait_ms ?? 2000;
-    lib_core.info(`  Waiting ${waitMs}ms for server to start...`);
-    await sleep(waitMs);
-    // Check if process is still running
-    if (serverProcess.exitCode !== null) {
-        throw new Error(`HTTP server exited prematurely with code ${serverProcess.exitCode}`);
-    }
-    lib_core.info("  HTTP server started");
-    return serverProcess;
-}
-/**
- * Stop an HTTP server process
- */
-function stopHttpServer(serverProcess) {
-    if (!serverProcess) {
-        return;
-    }
-    lib_core.info("  Stopping HTTP server...");
-    try {
-        // Kill the process group (negative PID kills the group)
-        if (serverProcess.pid) {
-            process.kill(-serverProcess.pid, "SIGTERM");
-        }
-    }
-    catch (error) {
-        // Process might already be dead
-        lib_core.debug(`  Error stopping server: ${error}`);
-    }
-}
-/**
- * Run pre-test command if specified
- */
-async function runPreTestCommand(config, workDir) {
-    if (config.pre_test_command) {
-        lib_core.info(`  Running pre-test command: ${config.pre_test_command}`);
-        await exec.exec("sh", ["-c", config.pre_test_command], { cwd: workDir });
-        if (config.pre_test_wait_ms && config.pre_test_wait_ms > 0) {
-            lib_core.info(`  Waiting ${config.pre_test_wait_ms}ms for service to be ready...`);
-            await sleep(config.pre_test_wait_ms);
-        }
-    }
-}
-/**
- * Run post-test command if specified (cleanup)
- */
-async function runPostTestCommand(config, workDir) {
-    if (config.post_test_command) {
-        lib_core.info(`  Running post-test command: ${config.post_test_command}`);
-        try {
-            await exec.exec("sh", ["-c", config.post_test_command], { cwd: workDir });
-        }
-        catch (error) {
-            // Log but don't fail - cleanup errors shouldn't break the test
-            lib_core.warning(`  Post-test command failed: ${error}`);
-        }
-    }
-}
-/**
- * Probe a server with a specific configuration
- * @param useSharedServer - If true, skip starting per-config HTTP server (shared server is already running)
- */
-async function probeWithConfig(config, workDir, globalEnvVars, globalHeaders, globalCustomMessages, useSharedServer = false) {
-    const configEnvVars = parseEnvVars(config.env_vars);
-    const envVars = { ...globalEnvVars, ...configEnvVars };
-    const headers = { ...globalHeaders, ...config.headers };
-    const customMessages = config.custom_messages || globalCustomMessages;
-    // Run pre-test command before probing
-    await runPreTestCommand(config, workDir);
-    if (config.transport === "stdio") {
-        const command = config.start_command || "";
-        const parts = command.split(/\s+/);
-        const cmd = parts[0];
-        const args = parts.slice(1);
-        // Also parse additional args if provided
-        if (config.args) {
-            args.push(...config.args.split(/\s+/));
-        }
-        return await probeServer({
-            transport: "stdio",
-            command: cmd,
-            args,
-            workingDir: workDir,
-            envVars,
-            customMessages,
-        });
-    }
-    else {
-        // For HTTP transport, optionally start the server if start_command is provided
-        // Skip if using shared server
-        let serverProcess = null;
-        try {
-            if (config.start_command && !useSharedServer) {
-                serverProcess = await startHttpServer(config, workDir, envVars);
-            }
-            return await probeServer({
-                transport: "streamable-http",
-                url: config.server_url,
-                headers,
-                envVars,
-                customMessages,
-            });
-        }
-        finally {
-            // Always stop the server if we started it
-            stopHttpServer(serverProcess);
-        }
-    }
-}
-/**
- * Compare two sets of probe result files and return diffs
- */
-function compareResults(branchFiles, baseFiles) {
-    const diffs = new Map();
-    // Check all endpoints
-    const allEndpoints = new Set([...branchFiles.keys(), ...baseFiles.keys()]);
-    for (const endpoint of allEndpoints) {
-        const branchContent = branchFiles.get(endpoint);
-        const baseContent = baseFiles.get(endpoint);
-        if (!branchContent && baseContent) {
-            diffs.set(endpoint, `Endpoint removed in current branch (was present in base)`);
-        }
-        else if (branchContent && !baseContent) {
-            diffs.set(endpoint, `Endpoint added in current branch (not present in base)`);
-        }
-        else if (branchContent !== baseContent) {
-            // Generate a semantic JSON diff
-            const diff = generateJsonDiff(endpoint, baseContent || "", branchContent || "");
-            if (diff) {
-                diffs.set(endpoint, diff);
-            }
-        }
-    }
-    return diffs;
-}
-/**
- * Generate a semantic JSON diff that shows actual changes
- * rather than line-by-line text comparison
- */
-function generateJsonDiff(name, base, branch) {
-    try {
-        const baseObj = JSON.parse(base);
-        const branchObj = JSON.parse(branch);
-        const differences = findJsonDifferences(baseObj, branchObj, "");
-        if (differences.length === 0) {
-            return null;
-        }
-        const diffLines = [`--- base/${name}.json`, `+++ branch/${name}.json`, ""];
-        diffLines.push(...differences);
-        return diffLines.join("\n");
-    }
-    catch {
-        // Fallback to simple diff if JSON parsing fails
-        return generateSimpleTextDiff(name, base, branch);
-    }
-}
-/**
- * Recursively find differences between two JSON objects
- */
-function findJsonDifferences(base, branch, path) {
-    const diffs = [];
-    // Handle null/undefined
-    if (base === null || base === undefined) {
-        if (branch !== null && branch !== undefined) {
-            diffs.push(`+ ${path || "root"}: ${formatValue(branch)}`);
-        }
-        return diffs;
-    }
-    if (branch === null || branch === undefined) {
-        diffs.push(`- ${path || "root"}: ${formatValue(base)}`);
-        return diffs;
-    }
-    // Handle type mismatch
-    if (typeof base !== typeof branch) {
-        diffs.push(`- ${path || "root"}: ${formatValue(base)}`);
-        diffs.push(`+ ${path || "root"}: ${formatValue(branch)}`);
-        return diffs;
-    }
-    // Handle arrays
-    if (Array.isArray(base) && Array.isArray(branch)) {
-        return compareArrays(base, branch, path);
-    }
-    // Handle objects
-    if (typeof base === "object" && typeof branch === "object") {
-        const baseObj = base;
-        const branchObj = branch;
-        const allKeys = new Set([...Object.keys(baseObj), ...Object.keys(branchObj)]);
-        for (const key of allKeys) {
-            const newPath = path ? `${path}.${key}` : key;
-            if (!(key in baseObj)) {
-                diffs.push(`+ ${newPath}: ${formatValue(branchObj[key])}`);
-            }
-            else if (!(key in branchObj)) {
-                diffs.push(`- ${newPath}: ${formatValue(baseObj[key])}`);
-            }
-            else {
-                diffs.push(...findJsonDifferences(baseObj[key], branchObj[key], newPath));
-            }
-        }
-        return diffs;
-    }
-    // Handle primitives
-    if (base !== branch) {
-        diffs.push(`- ${path}: ${formatValue(base)}`);
-        diffs.push(`+ ${path}: ${formatValue(branch)}`);
-    }
-    return diffs;
-}
-/**
- * Compare arrays by finding items by their identity (name, uri, etc.)
- */
-function compareArrays(base, branch, path) {
-    const diffs = [];
-    // Try to identify items by name/uri for better diff
-    const baseItems = new Map();
-    const branchItems = new Map();
-    base.forEach((item, index) => {
-        const key = getItemKey(item, index);
-        baseItems.set(key, { item, index });
-    });
-    branch.forEach((item, index) => {
-        const key = getItemKey(item, index);
-        branchItems.set(key, { item, index });
-    });
-    // Find removed items
-    for (const [key, { item }] of baseItems) {
-        if (!branchItems.has(key)) {
-            const itemPath = `${path}[${key}]`;
-            diffs.push(`- ${itemPath}: ${formatValue(item)}`);
-        }
-    }
-    // Find added items
-    for (const [key, { item }] of branchItems) {
-        if (!baseItems.has(key)) {
-            const itemPath = `${path}[${key}]`;
-            diffs.push(`+ ${itemPath}: ${formatValue(item)}`);
-        }
-    }
-    // Find modified items
-    for (const [key, { item: baseItem }] of baseItems) {
-        const branchEntry = branchItems.get(key);
-        if (branchEntry) {
-            const itemPath = `${path}[${key}]`;
-            diffs.push(...findJsonDifferences(baseItem, branchEntry.item, itemPath));
-        }
-    }
-    return diffs;
-}
-/**
- * Get a unique key for an array item based on common identifiers
- */
-function getItemKey(item, index) {
-    if (item === null || item === undefined || typeof item !== "object") {
-        return `#${index}`;
-    }
-    const obj = item;
-    // Try common identifier fields
-    if (typeof obj.name === "string")
-        return obj.name;
-    if (typeof obj.uri === "string")
-        return obj.uri;
-    if (typeof obj.uriTemplate === "string")
-        return obj.uriTemplate;
-    if (typeof obj.type === "string" && typeof obj.text === "string") {
-        return `${obj.type}:${String(obj.text).slice(0, 50)}`;
-    }
-    if (typeof obj.method === "string")
-        return obj.method;
-    return `#${index}`;
-}
-/**
- * Format a value for display in the diff
- */
-function formatValue(value) {
-    if (value === null)
-        return "null";
-    if (value === undefined)
-        return "undefined";
-    if (typeof value === "string") {
-        // Truncate long strings
-        if (value.length > 100) {
-            return JSON.stringify(value.slice(0, 100) + "...");
-        }
-        return JSON.stringify(value);
-    }
-    if (typeof value === "object") {
-        const json = JSON.stringify(value);
-        // Truncate long objects
-        if (json.length > 200) {
-            return json.slice(0, 200) + "...";
-        }
-        return json;
-    }
-    return String(value);
-}
 /**
  * Extract primitive counts from a probe result
  */
@@ -57352,344 +56631,482 @@ function extractCounts(result) {
     };
 }
 /**
- * Generate a simple line-by-line diff (fallback for non-JSON)
+ * Compare two probe results and return structured diff results
  */
-function generateSimpleTextDiff(name, base, branch) {
-    const baseLines = base.split("\n");
-    const branchLines = branch.split("\n");
-    const diffLines = [];
-    const maxLines = Math.max(baseLines.length, branchLines.length);
-    for (let i = 0; i < maxLines; i++) {
-        const baseLine = baseLines[i];
-        const branchLine = branchLines[i];
-        if (baseLine !== branchLine) {
-            if (baseLine !== undefined) {
-                diffLines.push(`- ${baseLine}`);
-            }
-            if (branchLine !== undefined) {
-                diffLines.push(`+ ${branchLine}`);
+function compareProbeResults(baseResult, targetResult) {
+    const baseFiles = probeResultToFiles(baseResult);
+    const targetFiles = probeResultToFiles(targetResult);
+    const diffs = [];
+    const allEndpoints = new Set([...baseFiles.keys(), ...targetFiles.keys()]);
+    for (const endpoint of allEndpoints) {
+        const baseContent = baseFiles.get(endpoint);
+        const targetContent = targetFiles.get(endpoint);
+        if (!targetContent && baseContent) {
+            diffs.push({
+                endpoint,
+                diff: `Endpoint removed in target (was present in base)`,
+            });
+        }
+        else if (targetContent && !baseContent) {
+            diffs.push({
+                endpoint,
+                diff: `Endpoint added in target (not present in base)`,
+            });
+        }
+        else if (baseContent !== targetContent) {
+            const diff = generateJsonDiff(endpoint, baseContent || "", targetContent || "");
+            if (diff) {
+                diffs.push({ endpoint, diff });
             }
         }
     }
-    if (diffLines.length === 0) {
-        return null;
-    }
-    return `--- base/${name}.json\n+++ branch/${name}.json\n${diffLines.join("\n")}`;
+    return diffs;
 }
 /**
- * Start a shared HTTP server for all HTTP transport configurations
+ * Generate semantic JSON diff
  */
-async function startSharedHttpServer(command, workDir, waitMs, envVars) {
-    lib_core.info(`🚀 Starting HTTP server: ${command}`);
-    // Merge environment variables
-    const env = {};
-    for (const [key, value] of Object.entries(process.env)) {
-        if (value !== undefined) {
-            env[key] = value;
+function generateJsonDiff(name, base, target) {
+    try {
+        const baseObj = JSON.parse(base);
+        const targetObj = JSON.parse(target);
+        const differences = findJsonDifferences(baseObj, targetObj, "");
+        if (differences.length === 0) {
+            return null;
         }
+        const diffLines = [`--- base/${name}.json`, `+++ target/${name}.json`, ""];
+        diffLines.push(...differences);
+        return diffLines.join("\n");
     }
-    for (const [key, value] of Object.entries(envVars)) {
-        env[key] = value;
+    catch {
+        // Fallback for non-JSON
+        if (base === target)
+            return null;
+        return `--- base/${name}\n+++ target/${name}\n- ${base}\n+ ${target}`;
     }
-    const serverProcess = (0,external_child_process_.spawn)("sh", ["-c", command], {
-        cwd: workDir,
-        env,
-        detached: true,
-        stdio: ["ignore", "pipe", "pipe"],
-    });
-    // Log server output for debugging
-    serverProcess.stdout?.on("data", (data) => {
-        lib_core.debug(`  [HTTP server stdout]: ${data.toString().trim()}`);
-    });
-    serverProcess.stderr?.on("data", (data) => {
-        lib_core.debug(`  [HTTP server stderr]: ${data.toString().trim()}`);
-    });
-    lib_core.info(`  Waiting ${waitMs}ms for HTTP server to start...`);
-    await sleep(waitMs);
-    // Check if process is still running
-    if (serverProcess.exitCode !== null) {
-        throw new Error(`HTTP server exited prematurely with code ${serverProcess.exitCode}`);
-    }
-    lib_core.info("  ✅ HTTP server started");
-    return serverProcess;
 }
 /**
- * Probe a single configuration (without comparison)
+ * Recursively find differences between two JSON objects
  */
-async function probeConfig(config, workDir, envVars, headers, customMessages, useSharedServer) {
-    lib_core.info(`  📋 Probing: ${config.name} (${config.transport})`);
-    const start = Date.now();
-    let result;
-    try {
-        result = await probeWithConfig(config, workDir, envVars, headers, customMessages, useSharedServer);
+function findJsonDifferences(base, target, path) {
+    const diffs = [];
+    if (base === null || base === undefined) {
+        if (target !== null && target !== undefined) {
+            diffs.push(`+ ${path || "root"}: ${formatValue(target)}`);
+        }
+        return diffs;
     }
-    finally {
-        await runPostTestCommand(config, workDir);
+    if (target === null || target === undefined) {
+        diffs.push(`- ${path || "root"}: ${formatValue(base)}`);
+        return diffs;
     }
-    return { result, time: Date.now() - start };
+    if (typeof base !== typeof target) {
+        diffs.push(`- ${path || "root"}: ${formatValue(base)}`);
+        diffs.push(`+ ${path || "root"}: ${formatValue(target)}`);
+        return diffs;
+    }
+    if (Array.isArray(base) && Array.isArray(target)) {
+        return compareArrays(base, target, path);
+    }
+    if (typeof base === "object" && typeof target === "object") {
+        const baseObj = base;
+        const targetObj = target;
+        const allKeys = new Set([...Object.keys(baseObj), ...Object.keys(targetObj)]);
+        for (const key of allKeys) {
+            const newPath = path ? `${path}.${key}` : key;
+            if (!(key in baseObj)) {
+                diffs.push(`+ ${newPath}: ${formatValue(targetObj[key])}`);
+            }
+            else if (!(key in targetObj)) {
+                diffs.push(`- ${newPath}: ${formatValue(baseObj[key])}`);
+            }
+            else {
+                diffs.push(...findJsonDifferences(baseObj[key], targetObj[key], newPath));
+            }
+        }
+        return diffs;
+    }
+    if (base !== target) {
+        diffs.push(`- ${path}: ${formatValue(base)}`);
+        diffs.push(`+ ${path}: ${formatValue(target)}`);
+    }
+    return diffs;
 }
 /**
- * Run all diff tests using the "probe all, then compare" approach
+ * Compare arrays by finding items by their identity
  */
-async function runAllTests(ctx) {
-    const globalEnvVars = parseEnvVars(ctx.inputs.envVars);
-    const globalHeaders = ctx.inputs.headers || {};
-    const globalCustomMessages = ctx.inputs.customMessages || [];
-    // Check if we have a shared HTTP server to manage
-    const httpStartCommand = ctx.inputs.httpStartCommand;
-    const httpStartupWaitMs = ctx.inputs.httpStartupWaitMs || 2000;
-    const hasHttpConfigs = ctx.inputs.configurations.some((c) => c.transport === "streamable-http");
-    const useSharedServer = !!httpStartCommand && hasHttpConfigs;
-    // Store probe results for comparison
-    const branchResults = new Map();
-    const baseResults = new Map();
-    // ========================================
-    // PHASE 1: Probe all configs on current branch
-    // ========================================
-    lib_core.info("\n🔄 Phase 1: Testing current branch...");
-    let sharedServerProcess = null;
-    try {
-        // Start shared HTTP server if configured
-        if (useSharedServer) {
-            sharedServerProcess = await startSharedHttpServer(httpStartCommand, ctx.workDir, httpStartupWaitMs, globalEnvVars);
-        }
-        for (const config of ctx.inputs.configurations) {
-            const configUsesSharedServer = useSharedServer && config.transport === "streamable-http";
-            try {
-                const probeData = await probeConfig(config, ctx.workDir, globalEnvVars, globalHeaders, globalCustomMessages, configUsesSharedServer);
-                branchResults.set(config.name, probeData);
-            }
-            catch (error) {
-                lib_core.error(`Failed to probe ${config.name} on current branch: ${error}`);
-                branchResults.set(config.name, {
-                    result: {
-                        initialize: null,
-                        tools: null,
-                        prompts: null,
-                        resources: null,
-                        resourceTemplates: null,
-                        customResponses: new Map(),
-                        error: String(error),
-                    },
-                    time: 0,
-                });
-            }
+function compareArrays(base, target, path) {
+    const diffs = [];
+    const baseItems = new Map();
+    const targetItems = new Map();
+    base.forEach((item, index) => {
+        const key = getItemKey(item, index);
+        baseItems.set(key, { item, index });
+    });
+    target.forEach((item, index) => {
+        const key = getItemKey(item, index);
+        targetItems.set(key, { item, index });
+    });
+    // Find removed items
+    for (const [key, { item }] of baseItems) {
+        if (!targetItems.has(key)) {
+            diffs.push(`- ${path}[${key}]: ${formatValue(item)}`);
         }
     }
-    finally {
-        if (sharedServerProcess) {
-            lib_core.info("🛑 Stopping current branch HTTP server...");
-            stopHttpServer(sharedServerProcess);
-            await sleep(500); // Give time for port to be released
+    // Find added items
+    for (const [key, { item }] of targetItems) {
+        if (!baseItems.has(key)) {
+            diffs.push(`+ ${path}[${key}]: ${formatValue(item)}`);
         }
     }
-    // ========================================
-    // PHASE 2: Probe all configs on base ref
-    // ========================================
-    lib_core.info(`\n🔄 Phase 2: Testing comparison ref: ${ctx.compareRef}...`);
-    const worktreePath = external_path_.join(ctx.workDir, ".mcp-diff-base");
-    let useWorktree = false;
-    try {
-        // Set up comparison ref
-        useWorktree = await createWorktree(ctx.compareRef, worktreePath);
-        if (!useWorktree) {
-            lib_core.info("  Worktree not available, using checkout");
-            await checkout(ctx.compareRef);
-        }
-        const baseWorkDir = useWorktree ? worktreePath : ctx.workDir;
-        // Build on base
-        lib_core.info("🔨 Building on comparison ref...");
-        await runBuild(baseWorkDir, ctx.inputs);
-        let baseServerProcess = null;
-        try {
-            // Start HTTP server for base ref if needed
-            if (useSharedServer) {
-                baseServerProcess = await startSharedHttpServer(httpStartCommand, baseWorkDir, httpStartupWaitMs, globalEnvVars);
-            }
-            for (const config of ctx.inputs.configurations) {
-                const configUsesSharedServer = useSharedServer && config.transport === "streamable-http";
-                try {
-                    const probeData = await probeConfig(config, baseWorkDir, globalEnvVars, globalHeaders, globalCustomMessages, configUsesSharedServer);
-                    baseResults.set(config.name, probeData);
-                }
-                catch (error) {
-                    lib_core.error(`Failed to probe ${config.name} on base ref: ${error}`);
-                    baseResults.set(config.name, {
-                        result: {
-                            initialize: null,
-                            tools: null,
-                            prompts: null,
-                            resources: null,
-                            resourceTemplates: null,
-                            customResponses: new Map(),
-                            error: String(error),
-                        },
-                        time: 0,
-                    });
-                }
-            }
-        }
-        finally {
-            if (baseServerProcess) {
-                lib_core.info("🛑 Stopping base ref HTTP server...");
-                stopHttpServer(baseServerProcess);
-            }
+    // Find modified items
+    for (const [key, { item: baseItem }] of baseItems) {
+        const targetEntry = targetItems.get(key);
+        if (targetEntry) {
+            diffs.push(...findJsonDifferences(baseItem, targetEntry.item, `${path}[${key}]`));
         }
     }
-    finally {
-        // Clean up
-        if (useWorktree) {
-            await removeWorktree(worktreePath);
-        }
-        else {
-            await checkoutPrevious();
-        }
+    return diffs;
+}
+/**
+ * Get a unique key for an array item
+ */
+function getItemKey(item, index) {
+    if (item === null || item === undefined || typeof item !== "object") {
+        return `#${index}`;
     }
-    // ========================================
-    // PHASE 3: Compare all results
-    // ========================================
-    lib_core.info("\n📊 Phase 3: Comparing results...");
-    const results = [];
-    for (const config of ctx.inputs.configurations) {
-        const branchData = branchResults.get(config.name);
-        const baseData = baseResults.get(config.name);
-        const result = {
-            configName: config.name,
-            transport: config.transport,
-            branchTime: branchData?.time || 0,
-            baseTime: baseData?.time || 0,
-            hasDifferences: false,
-            diffs: new Map(),
-            branchCounts: branchData?.result ? extractCounts(branchData.result) : undefined,
-            baseCounts: baseData?.result ? extractCounts(baseData.result) : undefined,
+    const obj = item;
+    if (typeof obj.name === "string")
+        return obj.name;
+    if (typeof obj.uri === "string")
+        return obj.uri;
+    if (typeof obj.uriTemplate === "string")
+        return obj.uriTemplate;
+    if (typeof obj.method === "string")
+        return obj.method;
+    return `#${index}`;
+}
+/**
+ * Format a value for display in diff output
+ */
+function formatValue(value) {
+    if (value === null)
+        return "null";
+    if (value === undefined)
+        return "undefined";
+    if (typeof value === "string") {
+        if (value.length > 100) {
+            return JSON.stringify(value.slice(0, 100) + "...");
+        }
+        return JSON.stringify(value);
+    }
+    if (typeof value === "object") {
+        const json = JSON.stringify(value);
+        if (json.length > 200) {
+            return json.slice(0, 200) + "...";
+        }
+        return json;
+    }
+    return String(value);
+}
+/**
+ * Convert DiffResult array to Map for backward compatibility
+ */
+function diffsToMap(diffs) {
+    const map = new Map();
+    for (const { endpoint, diff } of diffs) {
+        map.set(endpoint, diff);
+    }
+    return map;
+}
+
+;// CONCATENATED MODULE: ./src/cli.ts
+/**
+ * MCP Server Diff - CLI Entry Point
+ *
+ * Standalone CLI for diffing MCP server public interfaces.
+ * Can compare any two servers or multiple servers against a base.
+ */
+
+
+
+
+
+/**
+ * Parse command line arguments
+ */
+function parseCliArgs() {
+    const { values, positionals } = (0,external_node_util_.parseArgs)({
+        options: {
+            base: { type: "string", short: "b" },
+            target: { type: "string", short: "t" },
+            config: { type: "string", short: "c" },
+            output: { type: "string", short: "o", default: "summary" },
+            verbose: { type: "boolean", short: "v", default: false },
+            quiet: { type: "boolean", short: "q", default: false },
+            help: { type: "boolean", short: "h", default: false },
+            version: { type: "boolean", default: false },
+        },
+        allowPositionals: true,
+        strict: true,
+    });
+    return { values, positionals };
+}
+/**
+ * Print help message
+ */
+function printHelp() {
+    console.log(`
+mcp-server-diff - Diff MCP server public interfaces
+
+USAGE:
+  mcp-server-diff [OPTIONS]
+  mcp-server-diff --base "python -m server" --target "node dist/stdio.js"
+  mcp-server-diff --config servers.json
+
+OPTIONS:
+  -b, --base <command>     Base server command (stdio) or URL (http)
+  -t, --target <command>   Target server command (stdio) or URL (http)
+  -c, --config <file>      Config file with base and targets
+  -o, --output <format>    Output format: json, markdown, summary (default: summary)
+  -v, --verbose            Verbose output
+  -q, --quiet              Quiet mode (only output diffs)
+  -h, --help               Show this help
+      --version            Show version
+
+CONFIG FILE FORMAT:
+  {
+    "base": {
+      "name": "python-server",
+      "transport": "stdio",
+      "start_command": "python -m mcp_server"
+    },
+    "targets": [
+      {
+        "name": "typescript-server",
+        "transport": "stdio",
+        "start_command": "node dist/stdio.js"
+      }
+    ]
+  }
+
+OUTPUT FORMATS:
+  summary   - One line per comparison (default)
+  json      - Raw JSON with full diff details
+  markdown  - Formatted markdown report
+
+EXAMPLES:
+  # Compare two stdio servers
+  mcp-server-diff -b "python -m server" -t "node dist/index.js"
+
+  # Compare against HTTP server
+  mcp-server-diff -b "python -m server" -t "http://localhost:3000/mcp"
+
+  # Use config file for multiple comparisons
+  mcp-server-diff -c servers.json -o markdown
+
+  # Output raw JSON for CI
+  mcp-server-diff -c servers.json -o json -q
+`);
+}
+/**
+ * Load and parse config file
+ */
+function loadConfig(configPath) {
+    const content = external_fs_.readFileSync(configPath, "utf-8");
+    const config = JSON.parse(content);
+    if (!config.base) {
+        throw new Error("Config must have a 'base' server");
+    }
+    if (!config.targets || config.targets.length === 0) {
+        throw new Error("Config must have at least one 'target' server");
+    }
+    return config;
+}
+/**
+ * Create a server config from a command string
+ */
+function commandToConfig(command, name) {
+    if (command.startsWith("http://") || command.startsWith("https://")) {
+        return {
+            name,
+            transport: "streamable-http",
+            server_url: command,
         };
-        // Handle errors
-        if (branchData?.result.error) {
+    }
+    return {
+        name,
+        transport: "stdio",
+        start_command: command,
+    };
+}
+/**
+ * Probe a server and return results
+ */
+async function probeServerConfig(config) {
+    if (config.transport === "stdio") {
+        if (!config.start_command) {
+            throw new Error(`No start_command for stdio server: ${config.name}`);
+        }
+        const parts = config.start_command.split(/\s+/);
+        const command = parts[0];
+        const args = parts.slice(1);
+        return await probeServer({
+            transport: "stdio",
+            command,
+            args,
+            envVars: config.env_vars,
+        });
+    }
+    else {
+        if (!config.server_url) {
+            throw new Error(`No server_url for HTTP server: ${config.name}`);
+        }
+        return await probeServer({
+            transport: "streamable-http",
+            url: config.server_url,
+            headers: config.headers,
+            envVars: config.env_vars,
+        });
+    }
+}
+/**
+ * Compare base against all targets
+ */
+async function runComparisons(config) {
+    const results = [];
+    log.info(`\n📍 Probing base: ${config.base.name}`);
+    let baseResult;
+    try {
+        baseResult = await probeServerConfig(config.base);
+        if (baseResult.error) {
+            throw new Error(baseResult.error);
+        }
+    }
+    catch (error) {
+        log.error(`Failed to probe base server: ${error}`);
+        return config.targets.map((target) => ({
+            base: config.base.name,
+            target: target.name,
+            hasDifferences: true,
+            diffs: [{ endpoint: "error", diff: `Base server probe failed: ${error}` }],
+            baseCounts: { tools: 0, prompts: 0, resources: 0, resourceTemplates: 0 },
+            targetCounts: { tools: 0, prompts: 0, resources: 0, resourceTemplates: 0 },
+            error: String(error),
+        }));
+    }
+    const baseCounts = extractCounts(baseResult);
+    for (const target of config.targets) {
+        log.info(`\n🎯 Probing target: ${target.name}`);
+        const result = {
+            base: config.base.name,
+            target: target.name,
+            hasDifferences: false,
+            diffs: [],
+            baseCounts,
+            targetCounts: { tools: 0, prompts: 0, resources: 0, resourceTemplates: 0 },
+        };
+        try {
+            const targetResult = await probeServerConfig(target);
+            if (targetResult.error) {
+                result.hasDifferences = true;
+                result.diffs = [{ endpoint: "error", diff: `Target probe failed: ${targetResult.error}` }];
+                result.error = targetResult.error;
+            }
+            else {
+                result.targetCounts = extractCounts(targetResult);
+                result.diffs = compareProbeResults(baseResult, targetResult);
+                result.hasDifferences = result.diffs.length > 0;
+            }
+        }
+        catch (error) {
             result.hasDifferences = true;
-            result.diffs.set("error", `Current branch probe failed: ${branchData.result.error}`);
-            results.push(result);
-            continue;
+            result.diffs = [{ endpoint: "error", diff: `Target probe failed: ${error}` }];
+            result.error = String(error);
         }
-        if (baseData?.result.error) {
-            result.hasDifferences = true;
-            result.diffs.set("error", `Base ref probe failed: ${baseData.result.error}`);
-            results.push(result);
-            continue;
-        }
-        // Compare results
-        const branchFiles = probeResultToFiles(branchData.result);
-        const baseFiles = probeResultToFiles(baseData.result);
-        result.diffs = compareResults(branchFiles, baseFiles);
-        result.hasDifferences = result.diffs.size > 0;
-        if (result.hasDifferences) {
-            lib_core.info(`📋 Configuration ${config.name}: ${result.diffs.size} change(s) found`);
-        }
-        else {
-            lib_core.info(`✅ Configuration ${config.name}: no changes`);
-        }
-        // Save individual result
-        const resultPath = external_path_.join(ctx.workDir, ".mcp-diff-results", `${config.name}.json`);
-        external_fs_.mkdirSync(external_path_.dirname(resultPath), { recursive: true });
-        external_fs_.writeFileSync(resultPath, JSON.stringify({
-            ...result,
-            diffs: Object.fromEntries(result.diffs),
-        }, null, 2));
         results.push(result);
     }
     return results;
 }
-
-;// CONCATENATED MODULE: ./src/reporter.ts
 /**
- * Report generator for MCP server diff
+ * Output results in summary format
  */
-
-
-
-/**
- * Generate a diff report from test results
- */
-function generateReport(results, currentBranch, compareRef) {
-    const totalBranchTime = results.reduce((sum, r) => sum + r.branchTime, 0);
-    const totalBaseTime = results.reduce((sum, r) => sum + r.baseTime, 0);
-    const passedCount = results.filter((r) => !r.hasDifferences).length;
-    const diffCount = results.filter((r) => r.hasDifferences).length;
-    return {
-        generatedAt: new Date().toISOString(),
-        currentBranch,
-        compareRef,
-        results,
-        totalBranchTime,
-        totalBaseTime,
-        passedCount,
-        diffCount,
-    };
+function outputSummary(results) {
+    console.log("\n📊 Comparison Results:\n");
+    let hasAnyDiff = false;
+    for (const result of results) {
+        const status = result.hasDifferences ? "❌" : "✅";
+        const diffCount = result.diffs.length;
+        const counts = `(${result.targetCounts.tools}T/${result.targetCounts.prompts}P/${result.targetCounts.resources}R)`;
+        if (result.error) {
+            console.log(`${status} ${result.target} ${counts} - ERROR: ${result.error}`);
+        }
+        else if (result.hasDifferences) {
+            console.log(`${status} ${result.target} ${counts} - ${diffCount} difference(s)`);
+            hasAnyDiff = true;
+        }
+        else {
+            console.log(`${status} ${result.target} ${counts} - matches base`);
+        }
+    }
+    console.log("");
+    if (hasAnyDiff) {
+        console.log("Run with -o markdown or -o json for detailed diffs.");
+    }
 }
 /**
- * Generate markdown report
+ * Output results in JSON format
  */
-function generateMarkdownReport(report) {
+function outputJson(results) {
+    const output = {
+        timestamp: new Date().toISOString(),
+        results: results.map((r) => ({
+            base: r.base,
+            target: r.target,
+            hasDifferences: r.hasDifferences,
+            baseCounts: r.baseCounts,
+            targetCounts: r.targetCounts,
+            diffs: r.diffs,
+            error: r.error,
+        })),
+        summary: {
+            total: results.length,
+            matching: results.filter((r) => !r.hasDifferences).length,
+            different: results.filter((r) => r.hasDifferences).length,
+        },
+    };
+    console.log(JSON.stringify(output, null, 2));
+}
+/**
+ * Output results in markdown format
+ */
+function outputMarkdown(results) {
     const lines = [];
-    lines.push("# MCP Conformance Test Report");
+    lines.push("# MCP Server Diff Report");
     lines.push("");
-    lines.push(`**Generated:** ${report.generatedAt}`);
-    lines.push(`**Current Branch:** ${report.currentBranch}`);
-    lines.push(`**Compared Against:** ${report.compareRef}`);
+    lines.push(`**Generated:** ${new Date().toISOString()}`);
     lines.push("");
-    // Summary
     lines.push("## Summary");
     lines.push("");
-    lines.push(`| Metric | Value |`);
-    lines.push(`|--------|-------|`);
-    lines.push(`| Total Configurations | ${report.results.length} |`);
-    lines.push(`| Passed | ${report.passedCount} |`);
-    lines.push(`| With Differences | ${report.diffCount} |`);
-    lines.push(`| Branch Total Time | ${formatTime(report.totalBranchTime)} |`);
-    lines.push(`| Base Total Time | ${formatTime(report.totalBaseTime)} |`);
-    lines.push("");
-    // Overall status
-    if (report.diffCount === 0) {
-        lines.push("## ✅ No API Changes");
-        lines.push("");
-        lines.push("No differences detected between the current branch and the comparison ref.");
-    }
-    else {
-        lines.push("## 📋 API Changes Detected");
-        lines.push("");
-        lines.push(`${report.diffCount} configuration(s) have changes. Review below to ensure they are intentional.`);
+    lines.push("| Server | Tools | Prompts | Resources | Status |");
+    lines.push("|--------|-------|---------|-----------|--------|");
+    for (const result of results) {
+        const status = result.hasDifferences
+            ? result.error
+                ? "❌ Error"
+                : `⚠️ ${result.diffs.length} diff(s)`
+            : "✅ Match";
+        const c = result.targetCounts;
+        lines.push(`| ${result.target} | ${c.tools} | ${c.prompts} | ${c.resources} | ${status} |`);
     }
     lines.push("");
-    // Per-configuration results
-    lines.push("## Configuration Results");
-    lines.push("");
-    for (const result of report.results) {
-        const statusIcon = result.error ? "❌" : result.hasDifferences ? "⚠️" : "✅";
-        lines.push(`### ${statusIcon} ${result.configName}`);
+    const diffsPresent = results.filter((r) => r.hasDifferences && r.diffs.length > 0);
+    if (diffsPresent.length > 0) {
+        lines.push("## Differences");
         lines.push("");
-        lines.push(`- **Transport:** ${result.transport}`);
-        // Show primitive counts if available
-        if (result.branchCounts) {
-            const counts = result.branchCounts;
-            const countParts = [];
-            if (counts.tools > 0)
-                countParts.push(`${counts.tools} tools`);
-            if (counts.prompts > 0)
-                countParts.push(`${counts.prompts} prompts`);
-            if (counts.resources > 0)
-                countParts.push(`${counts.resources} resources`);
-            if (counts.resourceTemplates > 0)
-                countParts.push(`${counts.resourceTemplates} resource templates`);
-            if (countParts.length > 0) {
-                lines.push(`- **Primitives:** ${countParts.join(", ")}`);
-            }
-        }
-        lines.push(`- **Branch Time:** ${formatTime(result.branchTime)}`);
-        lines.push(`- **Base Time:** ${formatTime(result.baseTime)}`);
-        lines.push("");
-        if (result.hasDifferences) {
-            lines.push("#### Changes");
+        for (const result of diffsPresent) {
+            lines.push(`### ${result.target}`);
             lines.push("");
-            for (const [endpoint, diff] of result.diffs) {
+            for (const { endpoint, diff } of result.diffs) {
                 lines.push(`**${endpoint}**`);
                 lines.push("");
                 lines.push("```diff");
@@ -57698,335 +57115,68 @@ function generateMarkdownReport(report) {
                 lines.push("");
             }
         }
-        else {
-            lines.push("No differences detected.");
-            lines.push("");
-        }
-    }
-    return lines.join("\n");
-}
-/**
- * Format milliseconds to human readable time
- */
-function formatTime(ms) {
-    if (ms < 1000) {
-        return `${ms}ms`;
-    }
-    const seconds = (ms / 1000).toFixed(2);
-    return `${seconds}s`;
-}
-/**
- * Save report to file and set outputs
- */
-function saveReport(report, markdown, outputDir) {
-    // Ensure output directory exists
-    const reportDir = external_path_.join(outputDir, "mcp-diff-report");
-    external_fs_.mkdirSync(reportDir, { recursive: true });
-    // Save JSON report
-    const jsonPath = external_path_.join(reportDir, "mcp-diff-report.json");
-    external_fs_.writeFileSync(jsonPath, JSON.stringify({
-        ...report,
-        results: report.results.map((r) => ({
-            ...r,
-            diffs: Object.fromEntries(r.diffs),
-        })),
-    }, null, 2));
-    lib_core.info(`📄 JSON report saved to: ${jsonPath}`);
-    // Save markdown report
-    const mdPath = external_path_.join(reportDir, "MCP_DIFF_REPORT.md");
-    external_fs_.writeFileSync(mdPath, markdown);
-    lib_core.info(`📄 Markdown report saved to: ${mdPath}`);
-    // Set outputs using GITHUB_OUTPUT file (for composite actions)
-    const githubOutput = process.env.GITHUB_OUTPUT;
-    if (githubOutput) {
-        const status = report.diffCount > 0 ? "differences" : "passed";
-        external_fs_.appendFileSync(githubOutput, `status=${status}\n`);
-        external_fs_.appendFileSync(githubOutput, `report_path=${mdPath}\n`);
-        external_fs_.appendFileSync(githubOutput, `json_report_path=${jsonPath}\n`);
-        external_fs_.appendFileSync(githubOutput, `has_differences=${report.diffCount > 0}\n`);
-        external_fs_.appendFileSync(githubOutput, `passed_count=${report.passedCount}\n`);
-        external_fs_.appendFileSync(githubOutput, `diff_count=${report.diffCount}\n`);
-    }
-    // Also set via core for compatibility
-    lib_core.setOutput("report_path", mdPath);
-    lib_core.setOutput("json_report_path", jsonPath);
-    lib_core.setOutput("has_differences", report.diffCount > 0);
-    lib_core.setOutput("passed_count", report.passedCount);
-    lib_core.setOutput("diff_count", report.diffCount);
-}
-/**
- * Write a simple summary for PR comments
- */
-function generatePRSummary(report) {
-    const lines = [];
-    if (report.diffCount === 0) {
-        lines.push("## ✅ MCP Conformance: No Changes");
-        lines.push("");
-        lines.push(`Tested ${report.results.length} configuration(s) - no API changes detected.`);
     }
     else {
-        lines.push("## 📋 MCP Conformance: API Changes Detected");
+        lines.push("## ✅ All Servers Match");
         lines.push("");
-        lines.push(`**${report.diffCount}** of ${report.results.length} configuration(s) have changes.`);
-        lines.push("");
-        lines.push("### Changed Endpoints");
-        lines.push("");
-        for (const result of report.results.filter((r) => r.hasDifferences)) {
-            lines.push(`- **${result.configName}:** ${Array.from(result.diffs.keys()).join(", ")}`);
-        }
-        lines.push("");
-        lines.push("See the full report in the job summary for details.");
+        lines.push("No differences detected between base and target servers.");
     }
-    return lines.join("\n");
-}
-
-;// CONCATENATED MODULE: ./src/index.ts
-/**
- * MCP Server Diff - Main Entry Point
- *
- * Diffs MCP server public interfaces by comparing
- * API responses between the current branch and a reference.
- */
-
-
-
-
-
-/**
- * Get all inputs from the action (composite action style - INPUT_* env vars)
- */
-function getInputs() {
-    // Helper to get input from INPUT_* environment variables
-    const getInput = (name) => {
-        const envName = `INPUT_${name.toUpperCase().replace(/-/g, "_")}`;
-        return process.env[envName] || "";
-    };
-    const getBooleanInput = (name) => {
-        const value = getInput(name);
-        return value.toLowerCase() === "true";
-    };
-    const transport = (getInput("transport") || "stdio");
-    const startCommand = getInput("start_command");
-    const serverUrl = getInput("server_url");
-    // Parse configurations
-    const configurationsInput = getInput("configurations");
-    const configurations = parseConfigurations(configurationsInput, transport, startCommand, serverUrl);
-    // Parse custom messages
-    const customMessagesInput = getInput("custom_messages");
-    const customMessages = parseCustomMessages(customMessagesInput);
-    // Parse global headers
-    const headersInput = getInput("headers");
-    const headers = parseHeaders(headersInput);
-    return {
-        // Language setup
-        setupNode: getBooleanInput("setup_node"),
-        nodeVersion: getInput("node_version") || "20",
-        setupPython: getBooleanInput("setup_python"),
-        pythonVersion: getInput("python_version") || "3.11",
-        setupGo: getBooleanInput("setup_go"),
-        goVersion: getInput("go_version") || "1.24",
-        setupRust: getBooleanInput("setup_rust"),
-        rustToolchain: getInput("rust_toolchain") || "stable",
-        setupDotnet: getBooleanInput("setup_dotnet"),
-        dotnetVersion: getInput("dotnet_version") || "9.0.x",
-        // Build configuration
-        installCommand: getInput("install_command"),
-        buildCommand: getInput("build_command"),
-        startCommand,
-        // Transport configuration
-        transport,
-        serverUrl,
-        headers,
-        configurations,
-        customMessages,
-        // Shared HTTP server configuration
-        httpStartCommand: getInput("http_start_command"),
-        httpStartupWaitMs: parseInt(getInput("http_startup_wait_ms") || "2000", 10),
-        // Test configuration
-        compareRef: getInput("compare_ref"),
-        failOnError: getBooleanInput("fail_on_error") !== false, // default true
-        failOnDiff: getBooleanInput("fail_on_diff") === true, // default false
-        envVars: getInput("env_vars"),
-        serverTimeout: parseInt(getInput("server_timeout") || "30000", 10),
-    };
+    console.log(lines.join("\n"));
 }
 /**
- * Set up language runtimes based on inputs
+ * Main CLI entry point
  */
-async function setupLanguages(inputs) {
-    // We rely on composite action setup or assume runtimes are available
-    // In a pure Node action, we'd need to install these ourselves or
-    // require the user to set them up in a prior step
-    lib_core.info("📦 Verifying language runtimes...");
-    if (inputs.setupNode) {
-        try {
-            let output = "";
-            await exec.exec("node", ["--version"], {
-                silent: true,
-                listeners: {
-                    stdout: (data) => {
-                        output += data.toString();
-                    },
-                },
-            });
-            lib_core.info(`  Node.js: ${output.trim()}`);
-        }
-        catch {
-            lib_core.warning("Node.js not available - please set up in a prior step");
-        }
+async function main() {
+    const { values } = parseCliArgs();
+    if (values.help) {
+        printHelp();
+        process.exit(0);
     }
-    if (inputs.setupPython) {
-        try {
-            let output = "";
-            await exec.exec("python", ["--version"], {
-                silent: true,
-                listeners: {
-                    stdout: (data) => {
-                        output += data.toString();
-                    },
-                },
-            });
-            lib_core.info(`  Python: ${output.trim()}`);
-        }
-        catch {
-            lib_core.warning("Python not available - please set up in a prior step");
-        }
+    if (values.version) {
+        console.log("mcp-server-diff v2.1.0");
+        process.exit(0);
     }
-    if (inputs.setupGo) {
-        try {
-            let output = "";
-            await exec.exec("go", ["version"], {
-                silent: true,
-                listeners: {
-                    stdout: (data) => {
-                        output += data.toString();
-                    },
-                },
-            });
-            lib_core.info(`  Go: ${output.trim()}`);
-        }
-        catch {
-            lib_core.warning("Go not available - please set up in a prior step");
-        }
+    // Set up logger - CLI uses console logger by default
+    if (values.quiet) {
+        setLogger(new QuietLogger());
     }
-    if (inputs.setupRust) {
-        try {
-            let output = "";
-            await exec.exec("rustc", ["--version"], {
-                silent: true,
-                listeners: {
-                    stdout: (data) => {
-                        output += data.toString();
-                    },
-                },
-            });
-            lib_core.info(`  Rust: ${output.trim()}`);
-        }
-        catch {
-            lib_core.warning("Rust not available - please set up in a prior step");
-        }
+    else {
+        setLogger(new ConsoleLogger(values.verbose || false));
     }
-    if (inputs.setupDotnet) {
-        try {
-            let output = "";
-            await exec.exec("dotnet", ["--version"], {
-                silent: true,
-                listeners: {
-                    stdout: (data) => {
-                        output += data.toString();
-                    },
-                },
-            });
-            lib_core.info(`  .NET: ${output.trim()}`);
-        }
-        catch {
-            lib_core.warning(".NET not available - please set up in a prior step");
-        }
+    let config;
+    if (values.config) {
+        config = loadConfig(values.config);
     }
+    else if (values.base && values.target) {
+        config = {
+            base: commandToConfig(values.base, "base"),
+            targets: [commandToConfig(values.target, "target")],
+        };
+    }
+    else {
+        console.error("Error: Must provide --config or both --base and --target");
+        console.error("Run with --help for usage.");
+        process.exit(1);
+    }
+    const results = await runComparisons(config);
+    const outputFormat = values.output || "summary";
+    switch (outputFormat) {
+        case "json":
+            outputJson(results);
+            break;
+        case "markdown":
+            outputMarkdown(results);
+            break;
+        case "summary":
+        default:
+            outputSummary(results);
+            break;
+    }
+    const hasDiffs = results.some((r) => r.hasDifferences);
+    process.exit(hasDiffs ? 1 : 0);
 }
-/**
- * Run initial build for current branch
- */
-async function runInitialBuild(inputs) {
-    lib_core.info("🔨 Running initial build...");
-    if (inputs.installCommand) {
-        lib_core.info(`  Install: ${inputs.installCommand}`);
-        await exec.exec("sh", ["-c", inputs.installCommand]);
-    }
-    if (inputs.buildCommand) {
-        lib_core.info(`  Build: ${inputs.buildCommand}`);
-        await exec.exec("sh", ["-c", inputs.buildCommand]);
-    }
-}
-/**
- * Main action entry point
- */
-async function run() {
-    try {
-        lib_core.info("🚀 MCP Conformance Action");
-        lib_core.info("");
-        // Get inputs
-        const inputs = getInputs();
-        lib_core.info(`📋 Configuration:`);
-        lib_core.info(`  Transport: ${inputs.transport}`);
-        lib_core.info(`  Configurations: ${inputs.configurations.length}`);
-        for (const config of inputs.configurations) {
-            lib_core.info(`    - ${config.name} (${config.transport})`);
-        }
-        // Set up languages
-        await setupLanguages(inputs);
-        // Run initial build
-        await runInitialBuild(inputs);
-        // Determine comparison ref
-        const currentBranch = await getCurrentBranch();
-        const compareRef = await determineCompareRef(inputs.compareRef, process.env.GITHUB_REF);
-        const compareRefDisplay = await getRefDisplayName(compareRef);
-        lib_core.info("");
-        lib_core.info(`📊 Comparison:`);
-        lib_core.info(`  Current: ${currentBranch}`);
-        lib_core.info(`  Compare: ${compareRefDisplay}${compareRefDisplay !== compareRef ? ` (${compareRef.substring(0, 7)})` : ""}`);
-        // Run all tests
-        lib_core.info("");
-        lib_core.info("🧪 Running diff...");
-        const workDir = process.cwd();
-        const results = await runAllTests({
-            workDir,
-            inputs,
-            compareRef,
-        });
-        // Generate and save report
-        lib_core.info("");
-        lib_core.info("📝 Generating report...");
-        const report = generateReport(results, currentBranch, compareRefDisplay);
-        const markdown = generateMarkdownReport(report);
-        saveReport(report, markdown, workDir);
-        // Set final status
-        lib_core.info("");
-        // Check for actual probe errors (separate from differences)
-        const hasErrors = results.some((r) => r.diffs.has("error"));
-        if (hasErrors && inputs.failOnError) {
-            const errorConfigs = results.filter((r) => r.diffs.has("error")).map((r) => r.configName);
-            lib_core.setFailed(`❌ Probe errors occurred in: ${errorConfigs.join(", ")}`);
-        }
-        else if (report.diffCount > 0) {
-            if (inputs.failOnDiff) {
-                lib_core.setFailed(`❌ ${report.diffCount} configuration(s) have API changes`);
-            }
-            else {
-                lib_core.info(`📋 ${report.diffCount} configuration(s) have API changes`);
-            }
-            if (hasErrors) {
-                lib_core.warning("Some configurations had probe errors (fail_on_error is disabled)");
-            }
-        }
-        else {
-            lib_core.info("✅ All tests passed - no API changes detected");
-        }
-    }
-    catch (error) {
-        lib_core.setFailed(`Action failed: ${error}`);
-    }
-}
-// Run the action
-run();
+main().catch((error) => {
+    console.error("Fatal error:", error);
+    process.exit(1);
+});
 

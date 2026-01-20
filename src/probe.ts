@@ -7,7 +7,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import * as core from "@actions/core";
 import { z } from "zod";
 import type {
   ProbeResult,
@@ -18,6 +17,7 @@ import type {
   ResourceTemplatesResult,
   CustomMessage,
 } from "./types.js";
+import { log } from "./logger.js";
 
 export interface ProbeOptions {
   transport: "stdio" | "streamable-http";
@@ -61,7 +61,7 @@ export async function probeServer(options: ProbeOptions): Promise<ProbeResult> {
         throw new Error("Command is required for stdio transport");
       }
 
-      core.info(`  Connecting via stdio: ${options.command} ${(options.args || []).join(" ")}`);
+      log.info(`  Connecting via stdio: ${options.command} ${(options.args || []).join(" ")}`);
 
       // Merge environment variables
       const env: Record<string, string> = {};
@@ -85,18 +85,18 @@ export async function probeServer(options: ProbeOptions): Promise<ProbeResult> {
         throw new Error("URL is required for streamable-http transport");
       }
 
-      core.info(`  Connecting via streamable-http: ${options.url}`);
+      log.info(`  Connecting via streamable-http: ${options.url}`);
       const transportOptions: { requestInit?: RequestInit } = {};
       if (options.headers && Object.keys(options.headers).length > 0) {
         transportOptions.requestInit = { headers: options.headers };
-        core.info(`  With headers: ${Object.keys(options.headers).join(", ")}`);
+        log.info(`  With headers: ${Object.keys(options.headers).join(", ")}`);
       }
       transport = new StreamableHTTPClientTransport(new URL(options.url), transportOptions);
     }
 
     // Connect to the server
     await client.connect(transport);
-    core.info("  Connected successfully");
+    log.info("  Connected successfully");
 
     // Get server info and capabilities
     const serverCapabilities = client.getServerCapabilities();
@@ -112,12 +112,12 @@ export async function probeServer(options: ProbeOptions): Promise<ProbeResult> {
       try {
         const toolsResult = await client.listTools();
         result.tools = toolsResult as ToolsResult;
-        core.info(`  Listed ${result.tools.tools.length} tools`);
+        log.info(`  Listed ${result.tools.tools.length} tools`);
       } catch (error) {
-        core.warning(`  Failed to list tools: ${error}`);
+        log.warning(`  Failed to list tools: ${error}`);
       }
     } else {
-      core.info("  Server does not support tools");
+      log.info("  Server does not support tools");
     }
 
     // Probe prompts if supported
@@ -125,12 +125,12 @@ export async function probeServer(options: ProbeOptions): Promise<ProbeResult> {
       try {
         const promptsResult = await client.listPrompts();
         result.prompts = promptsResult as PromptsResult;
-        core.info(`  Listed ${result.prompts.prompts.length} prompts`);
+        log.info(`  Listed ${result.prompts.prompts.length} prompts`);
       } catch (error) {
-        core.warning(`  Failed to list prompts: ${error}`);
+        log.warning(`  Failed to list prompts: ${error}`);
       }
     } else {
-      core.info("  Server does not support prompts");
+      log.info("  Server does not support prompts");
     }
 
     // Probe resources if supported
@@ -138,23 +138,23 @@ export async function probeServer(options: ProbeOptions): Promise<ProbeResult> {
       try {
         const resourcesResult = await client.listResources();
         result.resources = resourcesResult as ResourcesResult;
-        core.info(`  Listed ${result.resources.resources.length} resources`);
+        log.info(`  Listed ${result.resources.resources.length} resources`);
       } catch (error) {
-        core.warning(`  Failed to list resources: ${error}`);
+        log.warning(`  Failed to list resources: ${error}`);
       }
 
       // Also get resource templates
       try {
         const templatesResult = await client.listResourceTemplates();
         result.resourceTemplates = templatesResult as ResourceTemplatesResult;
-        core.info(
+        log.info(
           `  Listed ${result.resourceTemplates.resourceTemplates.length} resource templates`
         );
       } catch (error) {
-        core.warning(`  Failed to list resource templates: ${error}`);
+        log.warning(`  Failed to list resource templates: ${error}`);
       }
     } else {
-      core.info("  Server does not support resources");
+      log.info("  Server does not support resources");
     }
 
     // Send custom messages if provided
@@ -170,20 +170,20 @@ export async function probeServer(options: ProbeOptions): Promise<ProbeResult> {
             anyResponseSchema
           );
           result.customResponses.set(customMsg.name, response);
-          core.info(`  Custom message '${customMsg.name}' successful`);
+          log.info(`  Custom message '${customMsg.name}' successful`);
         } catch (error) {
-          core.warning(`  Custom message '${customMsg.name}' failed: ${error}`);
+          log.warning(`  Custom message '${customMsg.name}' failed: ${error}`);
         }
       }
     }
 
-    core.info("  Probe complete");
+    log.info("  Probe complete");
 
     // Close the connection
     await client.close();
   } catch (error) {
     result.error = String(error);
-    core.error(`  Error probing server: ${error}`);
+    log.error(`  Error probing server: ${error}`);
 
     // Try to close client on error
     try {
