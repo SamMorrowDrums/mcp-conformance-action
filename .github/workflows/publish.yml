@@ -6,7 +6,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write  # Required for npm provenance
+  id-token: write  # Required for npm OIDC provenance
 
 jobs:
   publish:
@@ -30,7 +30,7 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Publish to npm
+      # Tokenless publish using npm's OIDC trust
+      # Requires package to be linked to this repo on npmjs.com
+      - name: Publish to npm with provenance
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
