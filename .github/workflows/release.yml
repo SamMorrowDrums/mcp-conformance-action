@@ -23,12 +23,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
-
-      - name: Configure npm registry
-        run: |
-          npm config set registry https://registry.npmjs.org/
-          npm config set //registry.npmjs.org/:_authToken ""
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Validate version matches tag
         run: |
@@ -57,5 +53,5 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
 
-      - name: Publish to npm with provenance
-        run: npm publish --provenance --access public
+      - name: Publish to npm
+        run: npm publish
