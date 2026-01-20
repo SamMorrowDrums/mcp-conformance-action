@@ -533,25 +533,26 @@ npx mcp-server-diff -b "..." -t "..." -o summary   # One-line summary (default)
 
 ### HTTP Headers & Authentication
 
-For authenticated HTTP endpoints, pass headers with `-H`:
+For authenticated HTTP endpoints, pass headers with `-H` (target) or `--base-header`:
 
 ```bash
-# Direct header value
+# Direct header value for target
 npx mcp-server-diff -b "./server" -t "https://api.example.com/mcp" \
   -H "Authorization: Bearer your-token-here"
 
 # Read from environment variable (keeps secrets out of shell history)
 export MCP_TOKEN="your-secret-token"
 npx mcp-server-diff -b "./server" -t "https://api.example.com/mcp" \
-  -H "Authorization: env:MCP_TOKEN"
+  -H "Authorization: Bearer env:MCP_TOKEN"
 
-# Prompt for secret interactively (hidden input)
+# Prompt for secret interactively (hidden input, named "token")
 npx mcp-server-diff -b "./server" -t "https://api.example.com/mcp" \
-  -H "Authorization: secret:"
+  -H "Authorization: Bearer secret:token"
 
-# Multiple headers
-npx mcp-server-diff -b "./server" -t "https://api.example.com/mcp" \
-  -H "Authorization: env:TOKEN" -H "X-Custom-Header: value"
+# Headers for both sides (e.g., comparing two authenticated servers)
+npx mcp-server-diff \
+  -b "https://api.example.com/v1/mcp" --base-header "Authorization: Bearer secret:v1token" \
+  -t "https://api.example.com/v2/mcp" -H "Authorization: Bearer secret:v2token"
 ```
 
 ### Config File
@@ -593,13 +594,20 @@ npx mcp-server-diff -c servers.json -o diff
 |--------|-------------|
 | `-b, --base <cmd\|url>` | Base server command (stdio) or URL (http) |
 | `-t, --target <cmd\|url>` | Target server command (stdio) or URL (http) |
-| `-H, --header <header>` | HTTP header (repeatable). Use `env:VAR` or `secret:` for values |
+| `-H, --header <header>` | HTTP header for target (repeatable) |
+| `--base-header <header>` | HTTP header for base server (repeatable) |
+| `--target-header <header>` | HTTP header for target (same as `-H`) |
 | `-c, --config <file>` | Config file with base and targets |
 | `-o, --output <format>` | Output: `diff`, `json`, `markdown`, `summary` (default) |
 | `-v, --verbose` | Verbose output |
 | `-q, --quiet` | Quiet mode (only output result) |
 | `-h, --help` | Show help |
 | `--version` | Show version |
+
+**Header value patterns:**
+- `Bearer your-token` — literal value
+- `Bearer env:VAR_NAME` — read from environment variable  
+- `Bearer secret:name` — prompt once for "name", reuse if used multiple times
 
 ---
 

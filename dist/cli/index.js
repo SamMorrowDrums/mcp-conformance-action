@@ -56870,6 +56870,8 @@ function parseCliArgs() {
             base: { type: "string", short: "b" },
             target: { type: "string", short: "t" },
             header: { type: "string", short: "H", multiple: true },
+            "base-header": { type: "string", multiple: true },
+            "target-header": { type: "string", multiple: true },
             config: { type: "string", short: "c" },
             output: { type: "string", short: "o", default: "summary" },
             verbose: { type: "boolean", short: "v", default: false },
@@ -56895,17 +56897,18 @@ USAGE:
   mcp-server-diff --config servers.json
 
 OPTIONS:
-  -b, --base <command>     Base server command (stdio) or URL (http)
-  -t, --target <command>   Target server command (stdio) or URL (http)
-  -H, --header <header>    HTTP header (can be repeated, e.g. -H "Authorization: Bearer ...")
-                           Use env:VAR_NAME to read value from environment variable
-                           Use secret: to prompt for value securely (hidden input)
-  -c, --config <file>      Config file with base and targets
-  -o, --output <format>    Output format: diff, json, markdown, summary (default: summary)
-  -v, --verbose            Verbose output
-  -q, --quiet              Quiet mode (only output diffs)
-  -h, --help               Show this help
-      --version            Show version
+  -b, --base <command>       Base server command (stdio) or URL (http)
+  -t, --target <command>     Target server command (stdio) or URL (http)
+  -H, --header <header>      HTTP header for target (repeatable)
+      --base-header <header> HTTP header for base server (repeatable)
+      --target-header <hdr>  HTTP header for target server (repeatable, same as -H)
+                             Values support: env:VAR_NAME, secret:name, "Bearer secret:token"
+  -c, --config <file>        Config file with base and targets
+  -o, --output <format>      Output format: diff, json, markdown, summary (default: summary)
+  -v, --verbose              Verbose output
+  -q, --quiet                Quiet mode (only output diffs)
+  -h, --help                 Show this help
+      --version              Show version
 
 CONFIG FILE FORMAT:
   {
@@ -56990,8 +56993,10 @@ function commandToConfig(command, name, headers) {
 /**
  * Parse header strings into a record
  * Accepts formats: "Header: value" or "Header=value"
- * Values starting with "env:" read from environment variables
- * Values starting with "secret:" will be prompted (collected separately)
+ * Special value patterns:
+ *   env:VAR_NAME - reads from environment variable
+ *   secret:name - prompts for secret (name is the prompt label)
+ *   "Bearer secret:token" - prefix + secret (prompts for "token", prepends "Bearer ")
  */
 function parseHeaders(headerStrings, secretValues) {
     const headers = {};
@@ -57013,14 +57018,17 @@ function parseHeaders(headerStrings, secretValues) {
                 }
                 value = envValue;
             }
-            else if (value.startsWith("secret:")) {
-                // Use prompted secret value
-                const secretKey = `${key}`;
-                if (secretValues?.has(secretKey)) {
-                    value = secretValues.get(secretKey);
-                }
-                else {
-                    throw new Error(`Secret value for header ${key} not collected`);
+            else if (value.includes("secret:")) {
+                // Replace secret:name with the prompted value
+                const secretMatch = value.match(/secret:(\w+)/);
+                if (secretMatch) {
+                    const secretName = secretMatch[1];
+                    if (secretValues?.has(secretName)) {
+                        value = value.replace(`secret:${secretName}`, secretValues.get(secretName));
+                    }
+                    else {
+                        throw new Error(`Secret value for "${secretName}" not collected`);
+                    }
                 }
             }
             headers[key] = value;
@@ -57029,21 +57037,19 @@ function parseHeaders(headerStrings, secretValues) {
     return headers;
 }
 /**
- * Find headers that need secret prompts
+ * Find secrets that need prompts, returns array of {name, label} objects
  */
-function findSecretHeaders(headerStrings) {
+function findSecrets(headerStrings) {
     const secrets = [];
     if (!headerStrings)
         return secrets;
     for (const h of headerStrings) {
-        const colonIdx = h.indexOf(":");
-        const eqIdx = h.indexOf("=");
-        const sepIdx = colonIdx > 0 ? colonIdx : eqIdx;
-        if (sepIdx > 0) {
-            const key = h.substring(0, sepIdx).trim();
-            const value = h.substring(sepIdx + 1).trim();
-            if (value.startsWith("secret:")) {
-                secrets.push(key);
+        const secretMatch = h.match(/secret:(\w+)/);
+        if (secretMatch) {
+            const name = secretMatch[1];
+            // Don't add duplicates
+            if (!secrets.find((s) => s.name === name)) {
+                secrets.push({ name, label: name });
             }
         }
     }
@@ -57101,14 +57107,14 @@ async function promptSecret(prompt) {
 /**
  * Prompt for secret values with hidden input
  */
-async function promptSecrets(headerNames) {
-    const secrets = new Map();
-    if (headerNames.length === 0)
-        return secrets;
-    for (const name of headerNames) {
-        secrets.set(name, await promptSecret(`Enter value for header "${name}"`));
+async function promptSecrets(secrets) {
+    const values = new Map();
+    if (secrets.length === 0)
+        return values;
+    for (const { name, label } of secrets) {
+        values.set(name, await promptSecret(`Enter ${label}`));
     }
-    return secrets;
+    return values;
 }
 /**
  * Probe a server and return results
@@ -57336,14 +57342,21 @@ async function main() {
         config = loadConfig(values.config);
     }
     else if (values.base && values.target) {
-        const headerStrings = values.header;
-        // Prompt for any secret: values before parsing
-        const secretHeaderNames = findSecretHeaders(headerStrings);
-        const secretValues = await promptSecrets(secretHeaderNames);
-        const headers = parseHeaders(headerStrings, secretValues);
+        // Combine -H and --target-header for target, use --base-header for base
+        const baseHeaderStrings = values["base-header"];
+        const targetHeaderStrings = [
+            ...(values.header || []),
+            ...(values["target-header"] || []),
+        ];
+        // Find all secrets needed from both header sets
+        const allHeaderStrings = [...(baseHeaderStrings || []), ...targetHeaderStrings];
+        const secrets = findSecrets(allHeaderStrings);
+        const secretValues = await promptSecrets(secrets);
+        const baseHeaders = parseHeaders(baseHeaderStrings, secretValues);
+        const targetHeaders = parseHeaders(targetHeaderStrings.length > 0 ? targetHeaderStrings : undefined, secretValues);
         config = {
-            base: commandToConfig(values.base, "base"),
-            targets: [commandToConfig(values.target, "target", headers)],
+            base: commandToConfig(values.base, "base", baseHeaders),
+            targets: [commandToConfig(values.target, "target", targetHeaders)],
         };
     }
     else {
