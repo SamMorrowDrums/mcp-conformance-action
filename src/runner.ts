@@ -781,7 +781,9 @@ export async function runAllTests(ctx: RunContext): Promise<TestResult[]> {
 
   // PHASE 2a: Probe configs with base_start_command directly (no git operations)
   if (configsWithBaseCommand.length > 0) {
-    core.info(`\n🔄 Phase 2a: Testing ${configsWithBaseCommand.length} config(s) with explicit base commands...`);
+    core.info(
+      `\n🔄 Phase 2a: Testing ${configsWithBaseCommand.length} config(s) with explicit base commands...`
+    );
 
     for (const config of configsWithBaseCommand) {
       try {
@@ -850,8 +852,7 @@ export async function runAllTests(ctx: RunContext): Promise<TestResult[]> {
         }
 
         for (const config of configsNeedingGit) {
-          const configUsesSharedServer =
-            useSharedServer && config.transport === "streamable-http";
+          const configUsesSharedServer = useSharedServer && config.transport === "streamable-http";
           try {
             const probeData = await probeConfig(
               config,
